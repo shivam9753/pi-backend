@@ -1,0 +1,330 @@
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const SubmissionService = require('../services/submissionService');
+const { authenticateUser, requireReviewer } = require('../middleware/auth');
+const { 
+  validateSubmissionCreation, 
+  validateSubmissionUpdate, 
+  validateStatusUpdate,
+  validateObjectId,
+  validatePagination 
+} = require('../middleware/validation');
+
+const router = express.Router();
+
+// Multer configuration for image uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, 'public/uploads/'),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'submission-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files allowed!'), false);
+    }
+  }
+});
+
+// GET /api/submissions/published - Get published submissions
+router.get('/published', validatePagination, async (req, res) => {
+  try {
+    const result = await SubmissionService.getPublishedSubmissions(req.query);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching published submissions', error: error.message });
+  }
+});
+
+// GET /api/submissions/published/:id - Get single published submission
+router.get('/published/:id', validateObjectId('id'), async (req, res) => {
+  try {
+    const submission = await SubmissionService.getPublishedSubmissionDetails(req.params.id);
+    res.json(submission);
+  } catch (error) {
+    if (error.message === 'Published submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error fetching submission', error: error.message });
+  }
+});
+
+// GET /api/submissions/types - Get submission types with counts
+router.get('/types', async (req, res) => {
+  try {
+    const types = await SubmissionService.getSubmissionTypes();
+    res.json({ types });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching submission types', error: error.message });
+  }
+});
+
+// GET /api/submissions/featured - Get featured submissions
+router.get('/featured', async (req, res) => {
+  try {
+    const featured = await SubmissionService.getFeaturedSubmissions(req.query);
+    res.json({ featured, total: featured.length });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching featured submissions', error: error.message });
+  }
+});
+
+// GET /api/submissions/search/:query - Search submissions
+router.get('/search/:query', validatePagination, async (req, res) => {
+  try {
+    const submissions = await SubmissionService.searchSubmissions(req.params.query, req.query);
+    res.json({ submissions });
+  } catch (error) {
+    res.status(500).json({ message: 'Error searching submissions', error: error.message });
+  }
+});
+
+// GET /api/submissions/user/me - Get current user's submissions (must come before /:userId)
+router.get('/user/me', authenticateUser, async (req, res) => {
+  try {
+    console.log('Getting submissions for user:', req.user?.userId);
+    if (!req.user?.userId) {
+      return res.status(400).json({ message: 'User not authenticated' });
+    }
+    const submissions = await SubmissionService.getUserSubmissions(req.user.userId);
+    res.json({ submissions });
+  } catch (error) {
+    console.error('Error in /user/me:', error);
+    res.status(500).json({ message: 'Error fetching user submissions', error: error.message });
+  }
+});
+
+// TEST ENDPOINT - GET /api/submissions/user/test - Get test user submissions (development only)
+router.get('/user/test', async (req, res) => {
+  try {
+    console.log('🧪 TEST ENDPOINT: Getting submissions for test user...');
+    // Use the provided user ID for testing
+    const testUserId = '688dc6db105e173c42b36364';
+    const submissions = await SubmissionService.getUserSubmissions(testUserId);
+    res.json({ 
+      message: 'Test endpoint - authentication bypassed for development',
+      submissions 
+    });
+  } catch (error) {
+    console.error('Error in test endpoint:', error);
+    res.status(500).json({ message: 'Error fetching test user submissions', error: error.message });
+  }
+});
+
+// GET /api/submissions/user/:userId - Get user's submissions
+router.get('/user/:userId', validateObjectId('userId'), validatePagination, async (req, res) => {
+  try {
+    const Submission = require('../models/Submission');
+    const submissions = await Submission.find({ userId: req.params.userId })
+      .populate('userId', 'username email profileImage')
+      .sort({ createdAt: -1 })
+      .limit(parseInt(req.query.limit) || 20)
+      .skip(parseInt(req.query.skip) || 0);
+
+    const total = await Submission.countDocuments({ userId: req.params.userId });
+    
+    res.json({
+      submissions,
+      total,
+      pagination: {
+        limit: parseInt(req.query.limit) || 20,
+        skip: parseInt(req.query.skip) || 0,
+        hasMore: (parseInt(req.query.skip) || 0) + submissions.length < total
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching user submissions', error: error.message });
+  }
+});
+
+// GET /api/submissions/:id - Get submission by ID
+router.get('/:id', validateObjectId('id'), async (req, res) => {
+  try {
+    const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
+    res.json({ submission });
+  } catch (error) {
+    if (error.message === 'Submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error fetching submission', error: error.message });
+  }
+});
+
+// GET /api/submissions/:id/contents - Get submission with contents
+router.get('/:id/contents', validateObjectId('id'), async (req, res) => {
+  try {
+    const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
+    res.json(submission);
+  } catch (error) {
+    if (error.message === 'Submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error fetching submission with contents', error: error.message });
+  }
+});
+
+// POST /api/submissions - Create new submission
+router.post('/', validateSubmissionCreation, async (req, res) => {
+  try {
+    const submission = await SubmissionService.createSubmission(req.body);
+    res.status(201).json({
+      message: 'Submission created successfully',
+      submission
+    });
+  } catch (error) {
+    if (error.message === 'User not found') {
+      return res.status(400).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error creating submission', error: error.message });
+  }
+});
+
+// GET /api/submissions/user/me - Get current user's submissions
+router.get('/user/me', authenticateUser, async (req, res) => {
+  try {
+    console.log('Getting submissions for user:', req.user?.userId);
+    if (!req.user?.userId) {
+      return res.status(400).json({ message: 'User not authenticated' });
+    }
+    const submissions = await SubmissionService.getUserSubmissions(req.user.userId);
+    res.json({ submissions });
+  } catch (error) {
+    console.error('Error in /user/me:', error);
+    res.status(500).json({ message: 'Error fetching user submissions', error: error.message });
+  }
+});
+
+// PUT /api/submissions/:id - Update submission
+router.put('/:id', authenticateUser, requireReviewer, validateObjectId('id'), validateSubmissionUpdate, async (req, res) => {
+  try {
+    const Submission = require('../models/Submission');
+    const Content = require('../models/Content');
+    
+    const submission = await Submission.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+    
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+
+    // Update contents if provided
+    if (req.body.contents && Array.isArray(req.body.contents)) {
+      for (const contentData of req.body.contents) {
+        if (contentData._id) {
+          await Content.findByIdAndUpdate(contentData._id, {
+            title: contentData.title,
+            body: contentData.body
+          });
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Submission updated successfully',
+      submission
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating submission', error: error.message });
+  }
+});
+
+// PATCH /api/submissions/:id/status - Update submission status
+router.patch('/:id/status', authenticateUser, requireReviewer, validateObjectId('id'), validateStatusUpdate, async (req, res) => {
+  try {
+    const submission = await SubmissionService.updateSubmissionStatus(
+      req.params.id, 
+      req.body.status, 
+      req.user._id
+    );
+
+    res.json({
+      success: true,
+      message: `Submission ${req.body.status}`,
+      submission
+    });
+  } catch (error) {
+    if (error.message === 'Submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error updating submission status', error: error.message });
+  }
+});
+
+// PATCH /api/submissions/:id/featured - Toggle featured status
+router.patch('/:id/featured', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const Submission = require('../models/Submission');
+    const submission = await Submission.findById(req.params.id);
+    
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+
+    await submission.toggleFeatured();
+
+    res.json({
+      message: `Submission ${submission.isFeatured ? 'featured' : 'unfeatured'}`,
+      submission
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error toggling featured status', error: error.message });
+  }
+});
+
+// POST /api/submissions/:id/upload-image - Upload image
+router.post('/:id/upload-image', authenticateUser, requireReviewer, validateObjectId('id'), upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided' });
+    }
+
+    const Submission = require('../models/Submission');
+    const imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    
+    const submission = await Submission.findByIdAndUpdate(
+      req.params.id,
+      { imageUrl },
+      { new: true }
+    );
+    
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Image uploaded successfully',
+      imageUrl,
+      submission
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error uploading image', error: error.message });
+  }
+});
+
+// DELETE /api/submissions/:id - Delete submission
+router.delete('/:id', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const result = await SubmissionService.deleteSubmission(req.params.id);
+    res.json(result);
+  } catch (error) {
+    if (error.message === 'Submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error deleting submission', error: error.message });
+  }
+});
+
+module.exports = router;
