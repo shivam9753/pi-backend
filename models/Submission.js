@@ -75,6 +75,54 @@ const submissionSchema = new mongoose.Schema({
   reviewedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  // SEO Metadata
+  seo: {
+    slug: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+      lowercase: true,
+      match: /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+    },
+    metaTitle: {
+      type: String,
+      maxlength: 60,
+      trim: true
+    },
+    metaDescription: {
+      type: String,
+      maxlength: 160,
+      trim: true
+    },
+    keywords: [{
+      type: String,
+      trim: true,
+      lowercase: true
+    }],
+    ogImage: {
+      type: String,
+      trim: true
+    },
+    canonical: {
+      type: String,
+      trim: true
+    },
+    publishSettings: {
+      allowComments: {
+        type: Boolean,
+        default: true
+      },
+      enableSocialSharing: {
+        type: Boolean,
+        default: true
+      },
+      featuredOnHomepage: {
+        type: Boolean,
+        default: false
+      }
+    }
   }
 }, {
   timestamps: true
@@ -88,6 +136,12 @@ submissionSchema.index({ createdAt: -1 });
 submissionSchema.index({ reviewedAt: -1 });
 submissionSchema.index({ tags: 1 });
 submissionSchema.index({ isFeatured: 1 });
+// Compound indexes for common queries
+submissionSchema.index({ status: 1, submissionType: 1 });
+submissionSchema.index({ status: 1, isFeatured: 1 });
+submissionSchema.index({ status: 1, reviewedAt: -1 });
+// SEO slug index for fast URL lookups
+submissionSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
 
 // Methods
 submissionSchema.methods.incrementViews = async function() {
@@ -138,6 +192,36 @@ submissionSchema.statics.generateExcerpt = function(contents, maxLength = 150) {
   
   const text = firstContent.body.replace(/\n/g, ' ').trim();
   return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+};
+
+submissionSchema.statics.generateSlug = function(title, authorName) {
+  // Create base slug from title
+  let slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
+    .replace(/\s+/g, '-') // Replace spaces with hyphens
+    .replace(/-+/g, '-') // Replace multiple hyphens with single hyphen
+    .trim();
+  
+  // Add author name if slug is too short or generic
+  if (slug.length < 10 || ['poem', 'story', 'article', 'essay'].includes(slug)) {
+    const authorSlug = authorName
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-');
+    slug = `${slug}-by-${authorSlug}`;
+  }
+  
+  return slug;
+};
+
+submissionSchema.statics.findBySlug = function(slug) {
+  return this.findOne({ 
+    'seo.slug': slug, 
+    status: 'published' 
+  })
+    .populate('userId', 'username email profileImage')
+    .populate('contentIds');
 };
 
 module.exports = mongoose.model('Submission', submissionSchema);

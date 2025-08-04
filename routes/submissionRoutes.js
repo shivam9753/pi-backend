@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
+const Submission = require('../models/Submission');
 const SubmissionService = require('../services/submissionService');
 const { authenticateUser, requireReviewer } = require('../middleware/auth');
 const { 
@@ -34,7 +35,89 @@ const upload = multer({
   }
 });
 
-// GET /api/submissions/published - Get published submissions
+// GET /api/submissions - Consolidated endpoint for submissions with status filtering
+router.get('/', validatePagination, async (req, res) => {
+  try {
+    const { status, type, limit = 20, skip = 0, sortBy = 'createdAt', order = 'desc' } = req.query;
+    
+    // Build query based on status
+    const query = {};
+    if (status) query.status = status;
+    if (type) query.submissionType = type;
+    
+    // Different field selection based on status
+    let selectFields;
+    if (status === 'published') {
+      selectFields = 'title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId seo';
+    } else {
+      selectFields = 'title excerpt imageUrl readingTime submissionType tags userId reviewedBy createdAt reviewedAt';
+    }
+    
+    const submissions = await Submission.find(query)
+      .select(selectFields)
+      .populate('userId', 'username email profileImage')
+      .populate('reviewedBy', 'username')
+      .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip))
+      .lean();
+
+    const total = await Submission.countDocuments(query);
+    
+    // Transform data based on status
+    let transformedSubmissions;
+    if (status === 'published') {
+      transformedSubmissions = submissions.map(sub => ({
+        _id: sub._id,
+        title: sub.title,
+        submissionType: sub.submissionType,
+        excerpt: sub.excerpt,
+        imageUrl: sub.imageUrl,
+        publishedAt: sub.reviewedAt || sub.createdAt,
+        viewCount: sub.viewCount,
+        likeCount: sub.likeCount,
+        readingTime: sub.readingTime,
+        tags: sub.tags,
+        slug: sub.seo?.slug,
+        author: {
+          _id: sub.userId._id,
+          username: sub.userId.username,
+          profileImage: sub.userId.profileImage
+        }
+      }));
+    } else {
+      transformedSubmissions = submissions.map(sub => ({
+        _id: sub._id,
+        title: sub.title,
+        excerpt: sub.excerpt,
+        imageUrl: sub.imageUrl,
+        readingTime: sub.readingTime,
+        submissionType: sub.submissionType,
+        tags: sub.tags,
+        submitterName: sub.userId?.username || 'Unknown',
+        reviewerName: sub.reviewedBy?.username || 'Unknown',
+        createdAt: sub.createdAt,
+        reviewedAt: sub.reviewedAt
+      }));
+    }
+    
+    res.json({
+      submissions: transformedSubmissions,
+      total,
+      pagination: {
+        limit: parseInt(limit),
+        skip: parseInt(skip),
+        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
+        totalPages: Math.ceil(total / parseInt(limit)),
+        hasMore: (parseInt(skip) + parseInt(limit)) < total
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching submissions', error: error.message });
+  }
+});
+
+// GET /api/submissions/published - Get published submissions (legacy support)
 router.get('/published', validatePagination, async (req, res) => {
   try {
     const result = await SubmissionService.getPublishedSubmissions(req.query);
@@ -308,6 +391,63 @@ router.delete('/:id', authenticateUser, requireReviewer, validateObjectId('id'),
       return res.status(404).json({ message: error.message });
     }
     res.status(500).json({ message: 'Error deleting submission', error: error.message });
+  }
+});
+
+// SEO-related routes
+// POST /api/submissions/:id/publish-with-seo - Publish submission with SEO configuration
+router.post('/:id/publish-with-seo', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const seoData = req.body;
+    const submission = await SubmissionService.publishWithSEO(req.params.id, seoData, req.user._id);
+    
+    res.json({
+      success: true,
+      message: 'Submission published with SEO configuration',
+      submission,
+      url: `/post/${submission.seo.slug}`
+    });
+  } catch (error) {
+    if (error.message === 'Submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    if (error.message === 'Slug already exists') {
+      return res.status(400).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error publishing submission with SEO', error: error.message });
+  }
+});
+
+// GET /api/submissions/by-slug/:slug - Get published submission by SEO slug
+router.get('/by-slug/:slug', async (req, res) => {
+  try {
+    const submission = await SubmissionService.getBySlug(req.params.slug);
+    res.json(submission);
+  } catch (error) {
+    if (error.message === 'Published submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error fetching submission by slug', error: error.message });
+  }
+});
+
+// PATCH /api/submissions/:id/seo - Update SEO configuration
+router.patch('/:id/seo', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const submission = await SubmissionService.updateSEO(req.params.id, req.body);
+    res.json({
+      success: true,
+      message: 'SEO configuration updated',
+      submission
+    });
+  } catch (error) {
+    if (error.message === 'Submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    if (error.message === 'Slug already exists') {
+      return res.status(400).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error updating SEO configuration', error: error.message });
   }
 });
 

@@ -66,16 +66,19 @@ class SubmissionService {
     const query = { status: 'accepted' };
     if (type) query.submissionType = type;
 
+    // Use .select() to only fetch required fields - exclude large fields like description
     const submissions = await Submission.find(query)
+      .select('title excerpt imageUrl readingTime reviewedAt submissionType tags userId reviewedBy')
       .populate('userId', 'username')
       .populate('reviewedBy', 'username')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
-      .skip(parseInt(skip));
+      .skip(parseInt(skip))
+      .lean(); // Use lean() for better performance on read-only data
 
     const total = await Submission.countDocuments(query);
 
-    // Return only required fields for display
+    // Return optimized data structure
     const optimizedSubmissions = submissions.map(sub => ({
       _id: sub._id,
       title: sub.title,
@@ -107,11 +110,14 @@ class SubmissionService {
     const query = { status: 'published' };
     if (type) query.submissionType = type;
 
+    // Use .select() to exclude large fields like description and contentIds for listing
     const submissions = await Submission.find(query)
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId')
       .populate('userId', 'username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
-      .skip(parseInt(skip));
+      .skip(parseInt(skip))
+      .lean(); // Use lean() for better performance
 
     const total = await Submission.countDocuments(query);
 
@@ -258,9 +264,11 @@ class SubmissionService {
     if (type) query.submissionType = type;
 
     const submissions = await Submission.find(query)
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId')
       .populate('userId', 'username email profileImage')
       .sort({ reviewedAt: -1 })
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .lean(); // Use lean() for better performance
 
     return submissions.map(sub => ({
       _id: sub._id,
@@ -288,7 +296,9 @@ class SubmissionService {
         $group: {
           _id: '$submissionType',
           count: { $sum: 1 },
-          latestSubmission: { $max: '$reviewedAt' }
+          latestSubmission: { $max: '$reviewedAt' },
+          totalViews: { $sum: '$viewCount' },
+          totalLikes: { $sum: '$likeCount' }
         }
       },
       { $sort: { count: -1 } }
@@ -299,8 +309,49 @@ class SubmissionService {
     return types.map(type => ({
       name: type._id,
       count: type.count,
-      latestSubmission: type.latestSubmission
+      latestSubmission: type.latestSubmission,
+      totalViews: type.totalViews,
+      totalLikes: type.totalLikes
     }));
+  }
+
+  // Add efficient submission stats aggregation
+  static async getSubmissionStats() {
+    const pipeline = [
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalViews: { $sum: '$viewCount' },
+          totalLikes: { $sum: '$likeCount' },
+          avgReadingTime: { $avg: '$readingTime' }
+        }
+      }
+    ];
+
+    const stats = await Submission.aggregate(pipeline);
+    
+    // Transform to more usable format
+    const result = {
+      pending_review: 0,
+      accepted: 0,
+      published: 0,
+      rejected: 0,
+      totalViews: 0,
+      totalLikes: 0,
+      avgReadingTime: 0
+    };
+
+    stats.forEach(stat => {
+      result[stat._id] = stat.count;
+      if (stat._id === 'published') {
+        result.totalViews = stat.totalViews;
+        result.totalLikes = stat.totalLikes;
+        result.avgReadingTime = Math.round(stat.avgReadingTime);
+      }
+    });
+
+    return result;
   }
 
   static async searchSubmissions(searchQuery, options = {}) {
@@ -316,10 +367,12 @@ class SubmissionService {
     };
 
     const submissions = await Submission.find(query)
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId')
       .populate('userId', 'username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
-      .skip(parseInt(skip));
+      .skip(parseInt(skip))
+      .lean(); // Use lean() for better performance
 
     const total = await Submission.countDocuments(query);
 
@@ -459,6 +512,98 @@ class SubmissionService {
       reviewFeedback: submission.reviewNotes || '',
       wordCount: submission.contentIds?.reduce((total, content) => total + (content.wordCount || 0), 0) || 0
     }));
+  }
+
+  // SEO-related methods
+  static async publishWithSEO(id, seoData, publisherId) {
+    const submission = await Submission.findById(id).populate('userId', 'username');
+    if (!submission) {
+      throw new Error('Submission not found');
+    }
+
+    // Generate slug if not provided
+    if (!seoData.slug) {
+      seoData.slug = Submission.generateSlug(submission.title, submission.userId.username);
+    }
+
+    // Ensure slug is unique
+    let uniqueSlug = seoData.slug;
+    let counter = 1;
+    while (await Submission.findOne({ 'seo.slug': uniqueSlug })) {
+      uniqueSlug = `${seoData.slug}-${counter}`;
+      counter++;
+    }
+
+    // Update submission with SEO data and publish
+    const updateData = {
+      status: 'published',
+      reviewedAt: new Date(),
+      reviewedBy: publisherId,
+      seo: {
+        slug: uniqueSlug,
+        metaTitle: seoData.metaTitle || submission.title,
+        metaDescription: seoData.metaDescription || submission.excerpt,
+        keywords: seoData.keywords || submission.tags,
+        ogImage: seoData.ogImage || submission.imageUrl,
+        canonical: seoData.canonical,
+        publishSettings: {
+          allowComments: seoData.allowComments !== false,
+          enableSocialSharing: seoData.enableSocialSharing !== false,
+          featuredOnHomepage: seoData.featuredOnHomepage === true
+        }
+      }
+    };
+
+    const updatedSubmission = await Submission.findByIdAndUpdate(id, updateData, { new: true });
+    return updatedSubmission;
+  }
+
+  static async getBySlug(slug) {
+    const submission = await Submission.findBySlug(slug);
+    if (!submission) {
+      throw new Error('Published submission not found');
+    }
+
+    // Increment view count
+    await submission.incrementViews();
+
+    return {
+      _id: submission._id,
+      title: submission.title,
+      description: submission.description,
+      submissionType: submission.submissionType,
+      authorName: submission.userId.username,
+      authorId: submission.userId._id,
+      publishedAt: submission.reviewedAt || submission.createdAt,
+      readingTime: submission.readingTime,
+      viewCount: submission.viewCount + 1,
+      likeCount: submission.likeCount,
+      tags: submission.tags,
+      imageUrl: submission.imageUrl,
+      excerpt: submission.excerpt,
+      contents: submission.contentIds,
+      seo: submission.seo,
+      createdAt: submission.createdAt,
+      updatedAt: submission.updatedAt
+    };
+  }
+
+  static async updateSEO(id, seoData) {
+    const submission = await Submission.findById(id);
+    if (!submission) {
+      throw new Error('Submission not found');
+    }
+
+    // If slug is being changed, ensure it's unique
+    if (seoData.slug && seoData.slug !== submission.seo?.slug) {
+      const existingSlug = await Submission.findOne({ 'seo.slug': seoData.slug });
+      if (existingSlug && existingSlug._id.toString() !== id) {
+        throw new Error('Slug already exists');
+      }
+    }
+
+    const updateData = { seo: { ...submission.seo, ...seoData } };
+    return await Submission.findByIdAndUpdate(id, updateData, { new: true });
   }
 }
 

@@ -92,8 +92,19 @@ const validateSubmissionUpdate = [
     .withMessage('Description must be 10-1000 characters long'),
   body('imageUrl')
     .optional()
-    .isURL()
-    .withMessage('Image URL must be valid'),
+    .custom((value) => {
+      // Allow localhost URLs for development
+      if (value.startsWith('http://localhost:')) {
+        return true;
+      }
+      // For other URLs, use standard URL validation
+      try {
+        new URL(value);
+        return true;
+      } catch {
+        throw new Error('Image URL must be valid');
+      }
+    }),
   handleValidationErrors
 ];
 
