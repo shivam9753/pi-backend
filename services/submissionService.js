@@ -321,7 +321,35 @@ class SubmissionService {
       .limit(parseInt(limit))
       .skip(parseInt(skip));
 
-    return submissions;
+    const total = await Submission.countDocuments(query);
+
+    return {
+      submissions: submissions.map(sub => ({
+        _id: sub._id,
+        title: sub.title,
+        submissionType: sub.submissionType,
+        excerpt: sub.excerpt,
+        imageUrl: sub.imageUrl,
+        publishedAt: sub.reviewedAt || sub.createdAt,
+        viewCount: sub.viewCount,
+        likeCount: sub.likeCount,
+        readingTime: sub.readingTime,
+        tags: sub.tags,
+        author: {
+          _id: sub.userId._id,
+          username: sub.userId.username,
+          profileImage: sub.userId.profileImage
+        }
+      })),
+      total,
+      pagination: {
+        limit: parseInt(limit),
+        skip: parseInt(skip),
+        hasMore: (parseInt(skip) + parseInt(limit)) < total,
+        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
+        totalPages: Math.ceil(total / parseInt(limit))
+      }
+    };
   }
 
   static async deleteSubmission(id) {

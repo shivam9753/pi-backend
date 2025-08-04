@@ -80,8 +80,8 @@ router.get('/featured', async (req, res) => {
 // GET /api/submissions/search/:query - Search submissions
 router.get('/search/:query', validatePagination, async (req, res) => {
   try {
-    const submissions = await SubmissionService.searchSubmissions(req.params.query, req.query);
-    res.json({ submissions });
+    const result = await SubmissionService.searchSubmissions(req.params.query, req.query);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Error searching submissions', error: error.message });
   }
@@ -102,22 +102,6 @@ router.get('/user/me', authenticateUser, async (req, res) => {
   }
 });
 
-// TEST ENDPOINT - GET /api/submissions/user/test - Get test user submissions (development only)
-router.get('/user/test', async (req, res) => {
-  try {
-    console.log('🧪 TEST ENDPOINT: Getting submissions for test user...');
-    // Use the provided user ID for testing
-    const testUserId = '688dc6db105e173c42b36364';
-    const submissions = await SubmissionService.getUserSubmissions(testUserId);
-    res.json({ 
-      message: 'Test endpoint - authentication bypassed for development',
-      submissions 
-    });
-  } catch (error) {
-    console.error('Error in test endpoint:', error);
-    res.status(500).json({ message: 'Error fetching test user submissions', error: error.message });
-  }
-});
 
 // GET /api/submissions/user/:userId - Get user's submissions
 router.get('/user/:userId', validateObjectId('userId'), validatePagination, async (req, res) => {
