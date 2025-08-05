@@ -4,11 +4,42 @@ const path = require('path');
 const dotenv = require('dotenv');
 
 // Load environment-specific .env file
-const NODE_ENV = process.env.NODE_ENV || 'development';
+// Force production environment if running with PM2 or explicitly set
+const NODE_ENV = process.env.NODE_ENV || (process.env.PM2_HOME ? 'production' : 'development');
 const envFile = NODE_ENV === 'production' ? '.env.production' : '.env';
 
 console.log(`Loading environment config: ${envFile}`);
-dotenv.config({ path: envFile });
+console.log(`NODE_ENV detected as: ${NODE_ENV}`);
+
+// Load environment variables
+const envResult = dotenv.config({ path: envFile });
+
+if (envResult.error) {
+  console.warn(`Warning: Could not load ${envFile}:`, envResult.error.message);
+  // Try loading default .env as fallback
+  const fallbackResult = dotenv.config({ path: '.env' });
+  if (fallbackResult.error) {
+    console.error('Could not load any environment file');
+  } else {
+    console.log('Loaded fallback .env file');
+  }
+} else {
+  console.log(`✅ Successfully loaded ${envFile}`);
+}
+
+// Log important environment variables for debugging
+console.log('Environment variables loaded:');
+console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
+console.log(`- STORAGE_TYPE: ${process.env.STORAGE_TYPE}`);
+console.log(`- S3_BUCKET_NAME: ${process.env.S3_BUCKET_NAME}`);
+console.log(`- AWS_REGION: ${process.env.AWS_REGION}`);
+console.log(`- Database: ${process.env.ATLAS_URL ? 'Configured' : 'Not configured'}`);
+
+// Ensure NODE_ENV is set correctly after loading environment file
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = NODE_ENV;
+  console.log(`Set NODE_ENV to: ${NODE_ENV}`);
+}
 
 // Import models first to ensure they are registered
 require('./models/User');
