@@ -44,10 +44,11 @@ const generalLimiter = createRateLimit(
   'Too many requests from this IP, please try again later'
 );
 
-// Strict rate limiter for auth endpoints - 5 requests per 15 minutes
+// Strict rate limiter for auth endpoints - 5 requests per 15 minutes in production
+// More lenient in development - 100 requests per 15 minutes
 const authLimiter = createRateLimit(
   15 * 60 * 1000, // 15 minutes
-  5,
+  process.env.NODE_ENV === 'production' ? 5 : 100,
   'Too many authentication attempts, please try again later'
 );
 

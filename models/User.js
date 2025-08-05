@@ -16,6 +16,13 @@ const userSchema = new mongoose.Schema({
     minlength: 2,
     maxlength: 30
   },
+  name: {
+    type: String,
+    required: false,
+    trim: true,
+    maxlength: 100,
+    default: ''
+  },
   password: {
     type: String,
     required: true,
@@ -69,6 +76,16 @@ const userSchema = new mongoose.Schema({
     showEmail: { type: Boolean, default: false },
     showStats: { type: Boolean, default: true },
     allowMessages: { type: Boolean, default: true }
+  },
+  // Track if user has completed initial profile setup
+  profileCompleted: {
+    type: Boolean,
+    default: false
+  },
+  // Track when user first registered
+  firstLogin: {
+    type: Date,
+    default: Date.now
   }
 }, {
   timestamps: true,

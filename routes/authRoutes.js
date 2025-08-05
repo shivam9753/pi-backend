@@ -38,52 +38,120 @@ router.post('/login', validateLogin, async (req, res) => {
   }
 });
 
-// POST /api/auth/google-user - Google authentication (legacy support)
-router.post('/google-user', async (req, res) => {
-  const { email, name } = req.body;
+// POST /api/auth/google-login - Authenticate existing Google user or register new user
+router.post('/google-login', async (req, res) => {
+  const { email, name, picture, given_name, family_name } = req.body;
 
   if (!email || !name) {
     return res.status(400).json({ message: 'Email and name are required' });
   }
 
   try {
-    // Try to register with Google auth
-    const userData = {
-      email,
-      username: name.replace(/\s+/g, '_').toLowerCase(),
-      password: 'GOOGLE_AUTH_TEMP_' + Date.now(), // Temporary password
-      bio: `Google authenticated user`
-    };
-
-    const result = await UserService.registerUser(userData);
+    // First, check if user already exists
+    const User = require('../models/User');
+    const existingUser = await User.findByEmail(email);
     
-    res.status(201).json({
-      message: 'Google user created successfully',
-      user: result.user,
-      token: result.token,
-      isNewUser: true
-    });
-  } catch (error) {
-    if (error.message.includes('already exists')) {
-      // User exists, attempt login (this is simplified - in production you'd handle Google auth differently)
-      try {
-        const User = require('../models/User');
-        const user = await User.findByEmail(email);
-        const { generateToken } = require('../middleware/auth');
-        const token = generateToken(user._id);
-        
-        res.json({
-          message: 'Google user logged in successfully',
-          user: user.toPublicJSON(),
-          token,
-          isNewUser: false
-        });
-      } catch (loginError) {
-        res.status(500).json({ message: 'Google authentication failed', error: loginError.message });
+    if (existingUser) {
+      // User exists - authenticate them
+      const { generateToken } = require('../middleware/auth');
+      const token = generateToken(existingUser._id);
+      
+      // Update user's name and picture if they've changed
+      let updatedUser = existingUser;
+      if (existingUser.name !== name || existingUser.profileImage !== picture) {
+        updatedUser = await User.findByIdAndUpdate(
+          existingUser._id,
+          { 
+            name: name,
+            profileImage: picture || existingUser.profileImage
+          },
+          { new: true }
+        );
       }
+      
+      res.json({
+        message: 'Google user authenticated successfully',
+        user: updatedUser.toPublicJSON(),
+        token,
+        isNewUser: false,
+        needsProfileCompletion: !updatedUser.profileCompleted
+      });
     } else {
-      res.status(500).json({ message: 'Google authentication failed', error: error.message });
+      // User doesn't exist - register them
+      const userData = {
+        email,
+        name,
+        username: name.replace(/\s+/g, '_').toLowerCase() + '_' + Date.now(), // Ensure unique username
+        password: 'GOOGLE_AUTH_' + Date.now(), // Temporary password
+        bio: 'Google authenticated user',
+        profileImage: picture || ''
+      };
+
+      const result = await UserService.registerUser(userData);
+      
+      res.status(201).json({
+        message: 'Google user registered successfully',
+        user: result.user,
+        token: result.token,
+        isNewUser: true,
+        needsProfileCompletion: true
+      });
     }
+  } catch (error) {
+    console.error('Google authentication error:', error);
+    res.status(500).json({ 
+      message: 'Google authentication failed', 
+      error: error.message 
+    });
+  }
+});
+
+// POST /api/auth/google-user - Google authentication (legacy support - deprecated)
+router.post('/google-user', async (req, res) => {
+  console.warn('⚠️ DEPRECATED: /api/auth/google-user endpoint used. Please use /api/auth/google-login instead.');
+  
+  // Redirect to new endpoint logic
+  const { email, name, picture, given_name, family_name } = req.body;
+  
+  // Forward to the new endpoint logic
+  req.body = { email, name, picture, given_name, family_name };
+  
+  // Call the same logic as google-login
+  try {
+    const User = require('../models/User');
+    const existingUser = await User.findByEmail(email);
+    
+    if (existingUser) {
+      const { generateToken } = require('../middleware/auth');
+      const token = generateToken(existingUser._id);
+      
+      res.json({
+        message: 'Google user logged in successfully',
+        user: existingUser.toPublicJSON(),
+        token,
+        isNewUser: false
+      });
+    } else {
+      const userData = {
+        email,
+        name,
+        username: name.replace(/\s+/g, '_').toLowerCase() + '_' + Date.now(),
+        password: 'GOOGLE_AUTH_' + Date.now(),
+        bio: 'Google authenticated user',
+        profileImage: picture || ''
+      };
+
+      const result = await UserService.registerUser(userData);
+      
+      res.status(201).json({
+        message: 'Google user created successfully',
+        user: result.user,
+        token: result.token,
+        isNewUser: true
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Google authentication failed', error: error.message });
   }
 });
 

@@ -4,7 +4,7 @@ const { generateToken } = require('../middleware/auth');
 
 class UserService {
   static async registerUser(userData) {
-    const { email, username, password, bio, socialLinks } = userData;
+    const { email, name, username, password, bio, socialLinks } = userData;
 
     // Check if user already exists
     const existingUser = await User.findOne({
@@ -23,6 +23,7 @@ class UserService {
     // Create user
     const user = new User({
       email,
+      name: name || '',
       username,
       password: hashedPassword,
       bio: bio || '',
@@ -96,7 +97,7 @@ class UserService {
     }
 
     // Update allowed fields
-    const allowedFields = ['username', 'bio', 'profileImage', 'socialLinks', 'preferences'];
+    const allowedFields = ['name', 'username', 'bio', 'profileImage', 'socialLinks', 'preferences'];
     const updates = {};
 
     Object.keys(updateData).forEach(key => {
@@ -183,7 +184,7 @@ class UserService {
   }
 
   static async getAllUsers(options = {}) {
-    const { limit = 50, skip = 0, role, sortBy = 'createdAt', order = 'desc' } = options;
+    const { limit = 50, skip = 0, role, sortBy = 'createdAt', order = 'desc', includeStats = false } = options;
     
     const query = {};
     if (role) query.role = role;
@@ -195,9 +196,27 @@ class UserService {
 
     const total = await User.countDocuments(query);
 
+    // Calculate stats if requested
+    let stats = null;
+    if (includeStats) {
+      const [userCount, reviewerCount, adminCount] = await Promise.all([
+        User.countDocuments({ role: 'user' }),
+        User.countDocuments({ role: 'reviewer' }),
+        User.countDocuments({ role: 'admin' })
+      ]);
+      
+      stats = {
+        users: userCount,
+        reviewers: reviewerCount,
+        admins: adminCount,
+        total: userCount + reviewerCount + adminCount
+      };
+    }
+
     return {
       users,
       total,
+      stats,
       pagination: {
         limit: parseInt(limit),
         skip: parseInt(skip),

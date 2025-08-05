@@ -28,7 +28,12 @@ router.get('/search', validatePagination, async (req, res) => {
 // GET /api/users - Get all users (admin only)
 router.get('/', authenticateUser, requireAdmin, validatePagination, async (req, res) => {
   try {
-    const result = await UserService.getAllUsers(req.query);
+    // Include stats if requested via query parameter
+    const options = {
+      ...req.query,
+      includeStats: req.query.includeStats === 'true'
+    };
+    const result = await UserService.getAllUsers(options);
     res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching users', error: error.message });
