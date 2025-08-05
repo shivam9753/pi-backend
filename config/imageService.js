@@ -33,6 +33,9 @@ class ImageService {
     const storageType = this.getStorageType();
     
     console.log(`📸 Uploading image using ${storageType} storage (${process.env.NODE_ENV || 'development'} mode)`);
+    console.log(`🔧 Storage config: STORAGE_TYPE=${process.env.STORAGE_TYPE}, NODE_ENV=${process.env.NODE_ENV}`);
+    console.log(`🔧 S3 Config: Bucket=${process.env.S3_BUCKET_NAME}, Region=${process.env.AWS_REGION}`);
+    console.log(`🔧 S3 Service available: ${!!S3ImageService}`);
     
     try {
       let result;
