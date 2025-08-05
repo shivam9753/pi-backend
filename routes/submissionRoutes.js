@@ -12,19 +12,14 @@ const {
   validatePagination 
 } = require('../middleware/validation');
 
+// Import ImageService for S3/local storage handling
+const { ImageService } = require('../config/imageService');
+
 const router = express.Router();
 
-// Multer configuration for image uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'public/uploads/'),
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'submission-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
+// Use memory storage for multer since we'll handle storage through ImageService
 const upload = multer({ 
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
@@ -355,12 +350,31 @@ router.post('/:id/upload-image', authenticateUser, requireReviewer, validateObje
       return res.status(400).json({ message: 'No image file provided' });
     }
 
+    console.log('🔧 DEBUG: Upload route called with file:', req.file.originalname);
+    console.log('🔧 DEBUG: File size:', req.file.size, 'bytes');
+    console.log('🔧 DEBUG: Using ImageService for upload...');
+
+    // Use ImageService to handle storage (S3 or local)
+    const uploadResult = await ImageService.uploadImage(
+      req.file.buffer, 
+      req.file.originalname,
+      { folder: 'submissions' }
+    );
+
+    if (!uploadResult.success) {
+      console.log('🔧 DEBUG: Image upload failed:', uploadResult.error);
+      return res.status(500).json({ 
+        message: 'Image upload failed', 
+        error: uploadResult.error 
+      });
+    }
+
+    console.log('🔧 DEBUG: Image uploaded successfully to:', uploadResult.url);
+
     const Submission = require('../models/Submission');
-    const imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-    
     const submission = await Submission.findByIdAndUpdate(
       req.params.id,
-      { imageUrl },
+      { imageUrl: uploadResult.url },
       { new: true }
     );
     
@@ -371,7 +385,7 @@ router.post('/:id/upload-image', authenticateUser, requireReviewer, validateObje
     res.json({
       success: true,
       message: 'Image uploaded successfully',
-      imageUrl,
+      imageUrl: uploadResult.url,
       submission
     });
   } catch (error) {
