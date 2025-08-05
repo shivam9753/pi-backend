@@ -303,11 +303,52 @@ router.put('/:id', authenticateUser, requireReviewer, validateObjectId('id'), va
 // PATCH /api/submissions/:id/status - Update submission status
 router.patch('/:id/status', authenticateUser, requireReviewer, validateObjectId('id'), validateStatusUpdate, async (req, res) => {
   try {
+    const Submission = require('../models/Submission');
+    
+    // Get submission before updating to check for images
+    const submissionBefore = await Submission.findById(req.params.id);
+    if (!submissionBefore) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+
     const submission = await SubmissionService.updateSubmissionStatus(
       req.params.id, 
       req.body.status, 
       req.user._id
     );
+
+    // If submission is being rejected and has an image, clean it up from S3
+    if (req.body.status === 'rejected' && submissionBefore.imageUrl) {
+      console.log('🗑️ Submission rejected, cleaning up S3 image:', submissionBefore.imageUrl);
+      
+      // Extract S3 key from URL for deletion
+      let s3Key = null;
+      if (submissionBefore.imageUrl.includes('amazonaws.com')) {
+        s3Key = submissionBefore.imageUrl.split('.amazonaws.com/')[1];
+      } else if (submissionBefore.imageUrl.includes('cloudfront.net')) {
+        s3Key = submissionBefore.imageUrl.split('.cloudfront.net/')[1];
+      }
+
+      // Delete from S3 if we have the key
+      if (s3Key) {
+        console.log('🔧 DEBUG: Attempting to delete S3 object:', s3Key);
+        try {
+          const deleteResult = await ImageService.deleteImage(s3Key);
+          
+          if (deleteResult.success) {
+            console.log('✅ Successfully deleted orphaned image from S3');
+          } else {
+            console.error('❌ Failed to delete from S3:', deleteResult.error);
+          }
+        } catch (deleteError) {
+          console.error('❌ Error during S3 cleanup:', deleteError);
+        }
+      }
+
+      // Remove image URL from rejected submission
+      submission.imageUrl = '';
+      await submission.save();
+    }
 
     res.json({
       success: true,
@@ -393,10 +434,102 @@ router.post('/:id/upload-image', authenticateUser, requireReviewer, validateObje
   }
 });
 
+// DELETE /api/submissions/:id/image - Delete submission image
+router.delete('/:id/image', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const Submission = require('../models/Submission');
+    const submission = await Submission.findById(req.params.id);
+    
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+
+    if (!submission.imageUrl) {
+      return res.status(404).json({ message: 'No image found for this submission' });
+    }
+
+    console.log('🔧 DEBUG: Deleting submission image:', submission.imageUrl);
+
+    // Extract S3 key from URL for deletion
+    let s3Key = null;
+    if (submission.imageUrl.includes('amazonaws.com')) {
+      // Extract key from S3 URL
+      s3Key = submission.imageUrl.split('.amazonaws.com/')[1];
+    } else if (submission.imageUrl.includes('cloudfront.net')) {
+      // Extract key from CloudFront URL  
+      s3Key = submission.imageUrl.split('.cloudfront.net/')[1];
+    }
+
+    // Delete from S3 if we have the key
+    if (s3Key) {
+      console.log('🔧 DEBUG: Attempting to delete S3 object:', s3Key);
+      const deleteResult = await ImageService.deleteImage(s3Key);
+      
+      if (!deleteResult.success) {
+        console.error('❌ Failed to delete from S3:', deleteResult.error);
+        // Continue anyway - we'll still remove from database
+      } else {
+        console.log('✅ Successfully deleted from S3');
+      }
+    } else {
+      console.log('⚠️ Could not extract S3 key from URL, skipping S3 deletion');
+    }
+
+    // Remove image URL from submission
+    submission.imageUrl = '';
+    await submission.save();
+
+    res.json({
+      success: true,
+      message: 'Image deleted successfully',
+      submission
+    });
+  } catch (error) {
+    console.error('Error deleting submission image:', error);
+    res.status(500).json({ message: 'Error deleting image', error: error.message });
+  }
+});
+
 // DELETE /api/submissions/:id - Delete submission
 router.delete('/:id', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
   try {
+    const Submission = require('../models/Submission');
+    
+    // Get submission before deleting to check for images
+    const submissionToDelete = await Submission.findById(req.params.id);
+    
+    // Delete the submission
     const result = await SubmissionService.deleteSubmission(req.params.id);
+    
+    // Clean up S3 images if submission had any
+    if (submissionToDelete && submissionToDelete.imageUrl) {
+      console.log('🗑️ Submission deleted, cleaning up S3 image:', submissionToDelete.imageUrl);
+      
+      // Extract S3 key from URL for deletion
+      let s3Key = null;
+      if (submissionToDelete.imageUrl.includes('amazonaws.com')) {
+        s3Key = submissionToDelete.imageUrl.split('.amazonaws.com/')[1];
+      } else if (submissionToDelete.imageUrl.includes('cloudfront.net')) {
+        s3Key = submissionToDelete.imageUrl.split('.cloudfront.net/')[1];
+      }
+
+      // Delete from S3 if we have the key
+      if (s3Key) {
+        console.log('🔧 DEBUG: Attempting to delete S3 object:', s3Key);
+        try {
+          const deleteResult = await ImageService.deleteImage(s3Key);
+          
+          if (deleteResult.success) {
+            console.log('✅ Successfully deleted orphaned image from S3');
+          } else {
+            console.error('❌ Failed to delete from S3:', deleteResult.error);
+          }
+        } catch (deleteError) {
+          console.error('❌ Error during S3 cleanup:', deleteError);
+        }
+      }
+    }
+    
     res.json(result);
   } catch (error) {
     if (error.message === 'Submission not found') {
