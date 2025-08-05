@@ -2,8 +2,10 @@
 let S3ImageService;
 try {
   S3ImageService = require('./s3').S3ImageService;
+  console.log('🔧 DEBUG: S3ImageService loaded successfully');
 } catch (error) {
-  console.log('S3 service not available (AWS SDK not installed) - using local storage');
+  console.log('🔧 DEBUG: S3 service not available (AWS SDK not installed) - using local storage');
+  console.log('🔧 DEBUG: S3 import error:', error.message);
   S3ImageService = null;
 }
 
@@ -41,10 +43,17 @@ class ImageService {
       let result;
       
       if (storageType === 's3') {
+        console.log('🔧 DEBUG: Attempting S3 upload...');
+        console.log('🔧 DEBUG: S3ImageService available:', !!S3ImageService);
+        
         if (!S3ImageService) {
+          console.log('🔧 DEBUG: S3ImageService is null - falling back to local storage');
           throw new Error('S3 service not available - AWS SDK not installed');
         }
+        
+        console.log('🔧 DEBUG: Calling S3ImageService.uploadImage...');
         result = await S3ImageService.uploadImage(imageBuffer, originalName, options);
+        console.log('🔧 DEBUG: S3 upload result:', result.success ? 'SUCCESS' : 'FAILED');
       } else {
         // Initialize local directories if needed
         await LocalImageService.initializeUploadDir();
