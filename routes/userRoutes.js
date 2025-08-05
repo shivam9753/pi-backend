@@ -51,9 +51,7 @@ router.get('/:id/profile', validateObjectId('id'), async (req, res) => {
 // GET /api/users/:id/submission-history - Check if user is first-time submitter
 router.get('/:id/submission-history', validateObjectId('id'), async (req, res) => {
   try {
-    console.log('Checking submission history for user ID:', req.params.id);
     const isFirstTime = await UserService.checkFirstTimeSubmitter(req.params.id);
-    console.log('User is first time:', isFirstTime);
     res.json({ isFirstTime });
   } catch (error) {
     console.error('Error in submission history check:', error);

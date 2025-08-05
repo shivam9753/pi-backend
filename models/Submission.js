@@ -47,28 +47,6 @@ const submissionSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  hasImages: {
-    type: Boolean,
-    default: false
-  },
-  imageStorage: {
-    type: String,
-    enum: ['none', 'inline', 'attachment'],
-    default: 'none'
-  },
-  viewCount: {
-    type: Number,
-    default: 0
-  },
-  likeCount: {
-    type: Number,
-    default: 0
-  },
-  tags: [{
-    type: String,
-    trim: true,
-    lowercase: true
-  }],
   reviewedAt: {
     type: Date
   },
@@ -80,8 +58,6 @@ const submissionSchema = new mongoose.Schema({
   seo: {
     slug: {
       type: String,
-      unique: true,
-      sparse: true,
       trim: true,
       lowercase: true,
       match: /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -125,7 +101,8 @@ const submissionSchema = new mongoose.Schema({
     }
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  versionKey: false
 });
 
 // Indexes
@@ -134,7 +111,6 @@ submissionSchema.index({ status: 1 });
 submissionSchema.index({ submissionType: 1 });
 submissionSchema.index({ createdAt: -1 });
 submissionSchema.index({ reviewedAt: -1 });
-submissionSchema.index({ tags: 1 });
 submissionSchema.index({ isFeatured: 1 });
 // Compound indexes for common queries
 submissionSchema.index({ status: 1, submissionType: 1 });
@@ -144,10 +120,6 @@ submissionSchema.index({ status: 1, reviewedAt: -1 });
 submissionSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
 
 // Methods
-submissionSchema.methods.incrementViews = async function() {
-  this.viewCount += 1;
-  return await this.save();
-};
 
 submissionSchema.methods.toggleFeatured = async function() {
   this.isFeatured = !this.isFeatured;
@@ -179,7 +151,9 @@ submissionSchema.statics.findWithContent = function(id) {
 
 submissionSchema.statics.calculateReadingTime = function(contents) {
   const totalWords = contents.reduce((total, content) => {
-    return total + (content.wordCount || 0);
+    if (!content.body) return total;
+    const wordCount = content.body.trim().split(/\s+/).filter(word => word.length > 0).length;
+    return total + wordCount;
   }, 0);
   return Math.ceil(totalWords / 200);
 };

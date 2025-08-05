@@ -14,9 +14,9 @@ async function connectDB() {
     if (!client) {
       client = new MongoClient(process.env.ATLAS_URL);
       await client.connect();
-      // Extract database name from connection URL
-      const url = new URL(process.env.ATLAS_URL);
-      const dbName = url.pathname.substring(1).split('?')[0]; // Remove leading '/' and query params
+      
+      // Determine database name based on environment
+      const dbName = NODE_ENV === 'production' ? 'poemsindiadb' : 'poemsindiadb-dev';
       db = client.db(dbName);
       console.log(`Connected to MongoDB database: ${dbName}`);
     }

@@ -22,15 +22,6 @@ const contentSchema = new mongoose.Schema({
     enum: ['poem', 'story', 'article', 'quote', 'cinema_essay'],
     default: 'poem'
   },
-  language: {
-    type: String,
-    enum: ['english', 'hindi', 'bengali', 'tamil', 'other'],
-    default: 'english'
-  },
-  wordCount: {
-    type: Number,
-    default: 0
-  },
   tags: [{
     type: String,
     trim: true,
@@ -69,7 +60,7 @@ const contentSchema = new mongoose.Schema({
     default: false
   }
 }, {
-  timestamps: true
+  versionKey: false
 });
 
 // Indexes
@@ -78,13 +69,6 @@ contentSchema.index({ type: 1 });
 contentSchema.index({ tags: 1 });
 contentSchema.index({ createdAt: -1 });
 
-// Pre-save hook to calculate word count and extract tags
-contentSchema.pre('save', function(next) {
-  if (this.body && (this.isNew || this.isModified('body'))) {
-    this.wordCount = this.body.split(/\s+/).filter(word => word.length > 0).length;
-  }
-  next();
-});
 
 // Static methods
 contentSchema.statics.createMany = async function(contents) {
@@ -106,11 +90,6 @@ contentSchema.statics.calculateWordCount = function(text) {
 
 contentSchema.statics.prepareForStorage = function(contentData) {
   const prepared = { ...contentData };
-  
-  if (prepared.body && !prepared.wordCount) {
-    prepared.wordCount = this.calculateWordCount(prepared.body);
-  }
-  
   return prepared;
 };
 

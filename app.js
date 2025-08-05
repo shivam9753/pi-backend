@@ -25,6 +25,9 @@ const reviewRoutes = require('./routes/reviewRoutes');
 const promptRoutes = require('./routes/prompts');
 const imageRoutes = require('./routes/imageRoutes');
 
+// Import security middleware
+const security = require('./middleware/security');
+
 
 const app = express();
 
@@ -63,6 +66,15 @@ app.get('/health', (req, res) => {
     uptime: process.uptime()
   });
 });
+
+// Apply API rate limiting to API routes
+app.use('/api', security.api);
+
+// Apply auth rate limiting to auth routes
+app.use('/api/auth', security.auth);
+
+// Apply upload rate limiting to image routes
+app.use('/api/images', security.upload);
 
 // API Routes
 app.use('/api/auth', authRoutes);

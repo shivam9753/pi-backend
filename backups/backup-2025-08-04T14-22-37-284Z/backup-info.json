@@ -1,0 +1,23 @@
+{
+  "timestamp": "2025-08-04T14:22:37.290Z",
+  "database": "poemsindiadb-dev",
+  "environment": "development",
+  "collections": {
+    "submissions": {
+      "count": 16,
+      "file": "submissions.json"
+    },
+    "contents": {
+      "count": 19,
+      "file": "contents.json"
+    },
+    "users": {
+      "count": 2,
+      "file": "users.json"
+    },
+    "reviews": {
+      "count": 13,
+      "file": "reviews.json"
+    }
+  }
+}

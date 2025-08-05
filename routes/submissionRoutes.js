@@ -173,7 +173,6 @@ router.get('/search/:query', validatePagination, async (req, res) => {
 // GET /api/submissions/user/me - Get current user's submissions (must come before /:userId)
 router.get('/user/me', authenticateUser, async (req, res) => {
   try {
-    console.log('Getting submissions for user:', req.user?.userId);
     if (!req.user?.userId) {
       return res.status(400).json({ message: 'User not authenticated' });
     }
@@ -257,7 +256,6 @@ router.post('/', validateSubmissionCreation, async (req, res) => {
 // GET /api/submissions/user/me - Get current user's submissions
 router.get('/user/me', authenticateUser, async (req, res) => {
   try {
-    console.log('Getting submissions for user:', req.user?.userId);
     if (!req.user?.userId) {
       return res.status(400).json({ message: 'User not authenticated' });
     }

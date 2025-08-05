@@ -71,7 +71,8 @@ const userSchema = new mongoose.Schema({
     allowMessages: { type: Boolean, default: true }
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  versionKey: false
 });
 
 // Indexes are automatically created by unique: true in schema

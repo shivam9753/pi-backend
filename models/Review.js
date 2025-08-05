@@ -30,7 +30,8 @@ const reviewSchema = new mongoose.Schema({
     max: 5
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  versionKey: false
 });
 
 // Indexes

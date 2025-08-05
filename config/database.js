@@ -8,9 +8,18 @@ dotenv.config({ path: envFile });
 
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.ATLAS_URL);
+    // Determine database name based on environment
+    const dbName = NODE_ENV === 'production' ? 'poemsindiadb' : 'poemsindiadb-dev';
+    
+    // Create connection URL with specific database
+    const connectionUrl = process.env.ATLAS_URL;
+    
+    const conn = await mongoose.connect(connectionUrl, {
+      dbName: dbName
+    });
 
     console.log(`MongoDB Connected: ${conn.connection.host}`);
+    console.log(`Connected to MongoDB database: ${conn.connection.name}`);
     
     // Create indexes for better performance
     await createIndexes();

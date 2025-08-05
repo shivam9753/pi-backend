@@ -1,0 +1,446 @@
+[
+  {
+    "_id": "688d0d4525851e38f0aa6188",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "Reparation to Mother",
+    "description": "Two Poems by Vinita Agrawal",
+    "contentIds": [
+      "688d0d4525851e38f0aa6184",
+      "688d0d4525851e38f0aa6185"
+    ],
+    "submissionType": "poem",
+    "status": "published",
+    "imageUrl": "http://localhost:3000/uploads/submission-1754085021462-773515245.png",
+    "excerpt": "Mother, I’ve come to erase \r<div>\r</div><div>the ink of your loneliness, \r</div><div>pooling in corners \r</div><div>no coffee could warm.  \r</div><div...",
+    "readingTime": 2,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [],
+    "createdAt": "2025-08-01T18:53:57.516Z",
+    "updatedAt": "2025-08-01T21:52:18.055Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-01T21:52:18.043Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688d619628a56869709be061",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "Private Grief in a Public World",
+    "description": "Grief, while deeply personal, often becomes a public performance due to societal expectations. This article examines the conflict between private mourning and social pressure for visible grieving, drawing from both the author's experience of losing her father to esophageal cancer and scholarly research, particularly Judith Butler's work on performativity. The analysis contrasts anticipatory grief—an internal, unrecognized experience—with the prescribed rituals of public mourning across various cultures, from Islamic and Hindu traditions to Western practices. These social expectations frequently overshadow the complex, individual nature of loss. This piece advocates for recognizing grief as a unique, personal journey that needs no audience or social validation, challenging readers to respect the private nature of mourning and support healing without judgment.",
+    "contentIds": [
+      "688d619628a56869709be05f"
+    ],
+    "submissionType": "article",
+    "status": "published",
+    "imageUrl": "http://localhost:3000/uploads/submission-1754096206222-4072590.avif",
+    "excerpt": "<i>Grief, while deeply personal, often becomes a public performance due to societal expectations. This article examines the conflict between private m...",
+    "readingTime": 17,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [],
+    "createdAt": "2025-08-02T00:53:42.930Z",
+    "updatedAt": "2025-08-02T00:56:54.363Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-02T00:56:54.362Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688d672e28a56869709be0ba",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "The Woman Without Kids",
+    "description": "I met a woman without kids in a suburban Mumbai play area. She was around the same age as me, swimming somewhere in the shallows of midlife, babysitting her two-year-old niece, a female-bodied individual who chose not to reproduce.",
+    "contentIds": [
+      "688d672e28a56869709be0b8"
+    ],
+    "submissionType": "article",
+    "status": "published",
+    "imageUrl": "http://localhost:3000/uploads/submission-1754097508461-364695621.avif",
+    "excerpt": "I met a woman without kids in a suburban Mumbai play area. She was around the same age as me, swimming somewhere in the shallows of midlife, babysitti...",
+    "readingTime": 8,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [],
+    "createdAt": "2025-08-02T01:17:34.394Z",
+    "updatedAt": "2025-08-02T01:18:33.213Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-02T01:18:33.212Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688d698e28a56869709be0f9",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "All We Imagine as Light and Girls Will Be Girls: The Good, The Bad and The Ugly Side of Female Relationships",
+    "description": "While I have been disappointed by the portrayal of women in these overhyped films, there have been two recent Indian films that left their mark on me for their subtle yet powerful explorations of female friendship and solidarity. The first is All We Imagine As Light, a 2024 drama film written and directed by Payal Kapadia which revolves around the lives of three different women who work at the same hospital in Mumbai.",
+    "contentIds": [
+      "688d698e28a56869709be0f7"
+    ],
+    "submissionType": "cinema_essay",
+    "status": "published",
+    "imageUrl": "http://localhost:3000/uploads/submission-1754098127776-854494634.avif",
+    "excerpt": "‘Ek aurat hi aurat ki sabse badi dushman hoti hai!’\r<div>\r</div><div>(A woman is a woman’s worst enemy!)\r</div><div>Everyone loves to bring this old a...",
+    "readingTime": 6,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [],
+    "createdAt": "2025-08-02T01:27:42.814Z",
+    "updatedAt": "2025-08-02T01:28:51.206Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-02T01:28:51.205Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688dbdd228a56869709be15f",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "How Vanga  changed Canada",
+    "description": "An essay on Montreal",
+    "contentIds": [
+      "688dbdd228a56869709be15d"
+    ],
+    "submissionType": "article",
+    "status": "published",
+    "imageUrl": "http://localhost:3000/uploads/submission-1754300354738-31326570.jpg",
+    "excerpt": "The story in Le navire Night was told to me in December ’77 by the person who had lived it, J.M., the young man of Les Gobelins. I knew J.M. and I kne...",
+    "readingTime": 4,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [],
+    "createdAt": "2025-08-02T07:27:14.584Z",
+    "updatedAt": "2025-08-04T09:50:43.020Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-04T09:50:43.013Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688dcbeb8a1e056aa2b28677",
+    "userId": "688dc6db105e173c42b36364",
+    "title": "But How, How to Occupy Life?",
+    "description": "But How, How to Occupy Life?",
+    "contentIds": [
+      "688dcbeb8a1e056aa2b28675"
+    ],
+    "submissionType": "article",
+    "status": "published",
+    "imageUrl": "http://localhost:3000/uploads/submission-1754123327724-38713131.jpg",
+    "excerpt": "<div><div>Marguerite Duras in 1960. Public domain, via Wikimedia Commons.\r</div><div><br></div><div>Marguerite Duras’s Le navire Night (The ship named...",
+    "readingTime": 2,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [],
+    "createdAt": "2025-08-02T08:27:23.960Z",
+    "updatedAt": "2025-08-02T08:28:52.477Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-02T08:28:52.476Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688de4918a1e056aa2b286c9",
+    "userId": "688dc6db105e173c42b36364",
+    "title": "What if Wes Anderson made a Nazi comedy?",
+    "description": "",
+    "contentIds": [
+      "688de4918a1e056aa2b286c7"
+    ],
+    "submissionType": "cinema_essay",
+    "status": "accepted",
+    "imageUrl": "",
+    "excerpt": "“What if Wes Anderson made a Nazi comedy?” is a reasonable way to pitch “Jojo Rabbit” to someone interested in seeing it. Waititi’s goofy comic sensib...",
+    "readingTime": 3,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [],
+    "createdAt": "2025-08-02T10:12:33.188Z",
+    "updatedAt": "2025-08-03T10:38:03.479Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-03T10:38:03.478Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688e5f9305ffaf4c8019aa41",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "vvvcvc",
+    "description": "",
+    "contentIds": [
+      "688e5f9305ffaf4c8019aa3f"
+    ],
+    "submissionType": "article",
+    "status": "rejected",
+    "imageUrl": "",
+    "excerpt": "fsdfdsfdsf<div>f</div><div>dsf</div><div>ds</div><div>f</div><div>dsf</div><div>s</div><div>f</div><div>dsf</div><div>ds</div>",
+    "readingTime": 1,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [],
+    "createdAt": "2025-08-02T18:57:23.817Z",
+    "updatedAt": "2025-08-02T18:57:48.083Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-02T18:57:48.082Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688e6eb896641a617eab67bd",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "sadasdsa",
+    "description": "sasdasdasd",
+    "contentIds": [
+      "688e6eb896641a617eab67bb"
+    ],
+    "submissionType": "poem",
+    "status": "rejected",
+    "imageUrl": "",
+    "excerpt": "sdsasdasd fjkj ashdjksah djkashdjk ahdjkhas jh asjh asjkh jkah jkas hjksadhk ajsd",
+    "readingTime": 1,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [
+      ""
+    ],
+    "createdAt": "2025-08-02T20:02:00.853Z",
+    "updatedAt": "2025-08-02T20:02:19.474Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-02T20:02:19.473Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688e6f4e96641a617eab67de",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "Uppas Home",
+    "description": "Uppa’s home was the definition of what makes a house, home. It was my mother’s house where we as kids spent days and nights together; when being together was the normal and not any luxury to look forward to.",
+    "contentIds": [
+      "688e6f4e96641a617eab67dc"
+    ],
+    "submissionType": "article",
+    "status": "published",
+    "imageUrl": "http://localhost:3000/uploads/submission-1754165126861-216534269.jpg",
+    "excerpt": "Uppa’s home was the definition of what makes a house, home. It was my mother’s house where we as kids spent days and nights together; when being toget...",
+    "readingTime": 4,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [
+      ""
+    ],
+    "createdAt": "2025-08-02T20:04:30.683Z",
+    "updatedAt": "2025-08-02T20:05:29.802Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-02T20:05:29.800Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688f2b478795245f0ed222e5",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "The Magic of Wes Anderson Movies - Beyond Pastels and Symmetry",
+    "description": "You're riding a metro, going on long holidays, reading a classic novel or walking into a retro café on a sunlit afternoon – make it like Wes Anderson. The summer of 2023 had been no short of a candy-floss world on the internet. It all boiled down to warm hues, siren-red, yellow fonts, and static shots—stamped with Texas-born Wesley Wales Anderson's autobiographical element.",
+    "contentIds": [
+      "688f2b478795245f0ed222e3"
+    ],
+    "submissionType": "article",
+    "status": "published",
+    "imageUrl": "http://localhost:3000/uploads/submission-1754303805269-369035327.jpg",
+    "excerpt": "You're riding a metro, going on long holidays, reading a classic novel or walking into a retro café on a sunlit afternoon – make it like Wes Anderson....",
+    "readingTime": 3,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [
+      ""
+    ],
+    "createdAt": "2025-08-03T09:26:31.760Z",
+    "updatedAt": "2025-08-04T10:38:34.603Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-04T10:38:34.603Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177",
+    "seo": {
+      "slug": "the-magic-of-wes-anderson-movies-beyond-pastels-an",
+      "metaTitle": "The Magic of Wes Anderson Movies - Beyond Pastels and Symmetry",
+      "metaDescription": "You're riding a metro, going on long holidays, reading a classic novel or walking into a retro café on a sunlit afternoon – make it like Wes Anderson.",
+      "keywords": [
+        "wes anderson",
+        "pastel"
+      ],
+      "ogImage": "http://localhost:3000/uploads/submission-1754303805269-369035327.jpg",
+      "publishSettings": {
+        "allowComments": true,
+        "enableSocialSharing": true,
+        "featuredOnHomepage": false
+      }
+    }
+  },
+  {
+    "_id": "688f8beab1e16a546047d528",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "Anora: A Screwball Tragedy",
+    "description": "",
+    "contentIds": [
+      "688f8beab1e16a546047d526"
+    ],
+    "submissionType": "cinema_essay",
+    "status": "rejected",
+    "imageUrl": "",
+    "excerpt": "I stood nearly three hours in line to catch Sean Baker's much-talked-about Cannes Palme d'Or-winning, festival darling, and most likely soon-to-be Aca...",
+    "readingTime": 2,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [
+      "anora"
+    ],
+    "createdAt": "2025-08-03T16:18:50.292Z",
+    "updatedAt": "2025-08-04T07:16:45.391Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-04T07:16:45.389Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "688f954fc669e95288d6df83",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "Parenthetical Womanhood",
+    "description": "",
+    "contentIds": [
+      "688f954fc669e95288d6df81"
+    ],
+    "submissionType": "poem",
+    "status": "rejected",
+    "imageUrl": "",
+    "excerpt": "I was in the waiting room \r<div>\r</div><div>my legs were almost straight. \r</div><div>Criminal Hopes \r</div><div>A vaguely repulsive mystery \r</div><d...",
+    "readingTime": 1,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [
+      "parenthood"
+    ],
+    "createdAt": "2025-08-03T16:58:55.989Z",
+    "updatedAt": "2025-08-04T07:16:59.815Z",
+    "__v": 0,
+    "reviewedAt": "2025-08-04T07:16:59.814Z",
+    "reviewedBy": "688d0cc225851e38f0aa6177"
+  },
+  {
+    "_id": "68905ed0aac9c22e22a3ce19",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "Anora: A ScrewBall Tragedy",
+    "description": "",
+    "contentIds": [
+      "68905ed0aac9c22e22a3ce17"
+    ],
+    "submissionType": "cinema_essay",
+    "status": "pending_review",
+    "imageUrl": "",
+    "excerpt": "I stood nearly three hours in line to catch Sean Baker's much-talked-about Cannes Palme d'Or-winning, festival darling, and most likely soon-to-be Aca...",
+    "readingTime": 2,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [
+      "anora"
+    ],
+    "createdAt": "2025-08-04T07:18:40.895Z",
+    "updatedAt": "2025-08-04T07:18:40.895Z",
+    "__v": 0
+  },
+  {
+    "_id": "68908bacd973f3f59af28c92",
+    "userId": "688dc6db105e173c42b36364",
+    "title": "Enjambment",
+    "description": "Four Poems by Mandavi Mishra",
+    "contentIds": [
+      "68908bacd973f3f59af28c8e",
+      "68908bacd973f3f59af28c8f"
+    ],
+    "submissionType": "poem",
+    "status": "pending_review",
+    "imageUrl": "",
+    "excerpt": "Things are suddenly good again\r<div>\r</div><div>I laughed my heart out\r</div><div>On a friend's joke.\r</div><div>I read new poems\r</div><div>And I am ...",
+    "readingTime": 2,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [
+      ""
+    ],
+    "seo": {
+      "publishSettings": {
+        "allowComments": true,
+        "enableSocialSharing": true,
+        "featuredOnHomepage": false
+      },
+      "keywords": []
+    },
+    "createdAt": "2025-08-04T10:30:04.912Z",
+    "updatedAt": "2025-08-04T10:30:04.912Z",
+    "__v": 0
+  },
+  {
+    "_id": "68908c58d973f3f59af28cb1",
+    "userId": "688d0cc225851e38f0aa6177",
+    "title": "Subway",
+    "description": "Three Poems by Sagnik Mukherjee",
+    "contentIds": [
+      "68908c58d973f3f59af28cad",
+      "68908c58d973f3f59af28cae"
+    ],
+    "submissionType": "poem",
+    "status": "pending_review",
+    "imageUrl": "",
+    "excerpt": "On every stair\r<div>\r</div><div>Sits a seller,\r</div><div>Some selling toys that don’t play,\r</div><div>Some selling watches that don’t tell time.\r</d...",
+    "readingTime": 1,
+    "isFeatured": false,
+    "hasImages": false,
+    "imageStorage": "none",
+    "viewCount": 0,
+    "likeCount": 0,
+    "tags": [
+      ""
+    ],
+    "seo": {
+      "publishSettings": {
+        "allowComments": true,
+        "enableSocialSharing": true,
+        "featuredOnHomepage": false
+      },
+      "keywords": []
+    },
+    "createdAt": "2025-08-04T10:32:56.780Z",
+    "updatedAt": "2025-08-04T10:32:56.780Z",
+    "__v": 0
+  }
+]

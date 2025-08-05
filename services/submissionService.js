@@ -36,15 +36,6 @@ class SubmissionService {
     const readingTime = Submission.calculateReadingTime(createdContents);
     const excerpt = Submission.generateExcerpt(createdContents);
 
-    // Extract unique tags
-    const allTags = createdContents.reduce((tags, content) => {
-      if (content.tags && Array.isArray(content.tags)) {
-        return [...tags, ...content.tags];
-      }
-      return tags;
-    }, []);
-    const uniqueTags = [...new Set(allTags)];
-
     // Create submission
     const submission = new Submission({
       userId: actualUserId,
@@ -53,8 +44,7 @@ class SubmissionService {
       contentIds: createdContents.map(c => c._id),
       submissionType,
       readingTime,
-      excerpt,
-      tags: uniqueTags
+      excerpt
     });
 
     return await submission.save();
@@ -112,7 +102,7 @@ class SubmissionService {
 
     // Use .select() to exclude large fields like description and contentIds for listing
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId')
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId')
       .populate('userId', 'username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
@@ -129,10 +119,7 @@ class SubmissionService {
         excerpt: sub.excerpt,
         imageUrl: sub.imageUrl,
         publishedAt: sub.reviewedAt || sub.createdAt,
-        viewCount: sub.viewCount,
-        likeCount: sub.likeCount,
         readingTime: sub.readingTime,
-        tags: sub.tags,
         author: {
           _id: sub.userId._id,
           username: sub.userId.username,
@@ -169,7 +156,6 @@ class SubmissionService {
       delete submissionObj.contentIds;
     }
 
-    console.log('Returning submission with contents:', submissionObj.contents?.length || 0, 'items');
     return submissionObj;
   }
 
@@ -185,9 +171,6 @@ class SubmissionService {
       throw new Error('Published submission not found');
     }
 
-    // Increment view count
-    await submission.incrementViews();
-
     return {
       _id: submission._id,
       title: submission.title,
@@ -197,15 +180,10 @@ class SubmissionService {
       authorId: submission.userId._id,
       publishedAt: submission.reviewedAt || submission.createdAt,
       readingTime: submission.readingTime,
-      viewCount: submission.viewCount + 1,
-      commentCount: submission.commentCount,
-      likeCount: submission.likeCount,
-      tags: submission.tags,
       imageUrl: submission.imageUrl,
       excerpt: submission.excerpt,
       contents: submission.contentIds,
-      createdAt: submission.createdAt,
-      updatedAt: submission.updatedAt
+      createdAt: submission.createdAt
     };
   }
 
@@ -216,7 +194,6 @@ class SubmissionService {
     }
 
     submission.status = status;
-    submission.updatedAt = new Date();
 
     if (status === 'published' || status === 'accepted') {
       submission.reviewedAt = new Date();
@@ -264,7 +241,7 @@ class SubmissionService {
     if (type) query.submissionType = type;
 
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId')
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId')
       .populate('userId', 'username email profileImage')
       .sort({ reviewedAt: -1 })
       .limit(parseInt(limit))
@@ -277,10 +254,7 @@ class SubmissionService {
       excerpt: sub.excerpt,
       imageUrl: sub.imageUrl,
       publishedAt: sub.reviewedAt || sub.createdAt,
-      viewCount: sub.viewCount,
-      likeCount: sub.likeCount,
       readingTime: sub.readingTime,
-      tags: sub.tags,
       author: {
         _id: sub.userId._id,
         username: sub.userId.username,
@@ -296,9 +270,7 @@ class SubmissionService {
         $group: {
           _id: '$submissionType',
           count: { $sum: 1 },
-          latestSubmission: { $max: '$reviewedAt' },
-          totalViews: { $sum: '$viewCount' },
-          totalLikes: { $sum: '$likeCount' }
+          latestSubmission: { $max: '$reviewedAt' }
         }
       },
       { $sort: { count: -1 } }
@@ -309,9 +281,7 @@ class SubmissionService {
     return types.map(type => ({
       name: type._id,
       count: type.count,
-      latestSubmission: type.latestSubmission,
-      totalViews: type.totalViews,
-      totalLikes: type.totalLikes
+      latestSubmission: type.latestSubmission
     }));
   }
 
@@ -322,8 +292,6 @@ class SubmissionService {
         $group: {
           _id: '$status',
           count: { $sum: 1 },
-          totalViews: { $sum: '$viewCount' },
-          totalLikes: { $sum: '$likeCount' },
           avgReadingTime: { $avg: '$readingTime' }
         }
       }
@@ -337,16 +305,12 @@ class SubmissionService {
       accepted: 0,
       published: 0,
       rejected: 0,
-      totalViews: 0,
-      totalLikes: 0,
       avgReadingTime: 0
     };
 
     stats.forEach(stat => {
       result[stat._id] = stat.count;
       if (stat._id === 'published') {
-        result.totalViews = stat.totalViews;
-        result.totalLikes = stat.totalLikes;
         result.avgReadingTime = Math.round(stat.avgReadingTime);
       }
     });
@@ -361,13 +325,12 @@ class SubmissionService {
       status: 'published',
       $or: [
         { title: { $regex: searchQuery, $options: 'i' } },
-        { description: { $regex: searchQuery, $options: 'i' } },
-        { tags: { $in: [new RegExp(searchQuery, 'i')] } }
+        { description: { $regex: searchQuery, $options: 'i' } }
       ]
     };
 
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId')
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId')
       .populate('userId', 'username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
@@ -384,10 +347,7 @@ class SubmissionService {
         excerpt: sub.excerpt,
         imageUrl: sub.imageUrl,
         publishedAt: sub.reviewedAt || sub.createdAt,
-        viewCount: sub.viewCount,
-        likeCount: sub.likeCount,
         readingTime: sub.readingTime,
-        tags: sub.tags,
         author: {
           _id: sub.userId._id,
           username: sub.userId.username,
@@ -467,15 +427,6 @@ class SubmissionService {
     const readingTime = Submission.calculateReadingTime(createdContents);
     const excerpt = Submission.generateExcerpt(createdContents);
 
-    // Extract unique tags
-    const allTags = createdContents.reduce((tags, content) => {
-      if (content.tags && Array.isArray(content.tags)) {
-        return [...tags, ...content.tags];
-      }
-      return tags;
-    }, []);
-    const uniqueTags = [...new Set(allTags)];
-
     // Create submission
     const submission = new Submission({
       userId: actualUserId,
@@ -484,8 +435,7 @@ class SubmissionService {
       contentIds: createdContents.map(c => c._id),
       submissionType,
       readingTime,
-      excerpt,
-      tags: uniqueTags
+      excerpt
     });
 
     return await submission.save();
@@ -504,13 +454,15 @@ class SubmissionService {
       submissionType: submission.submissionType,
       status: submission.status,
       submittedAt: submission.createdAt,
-      reviewedAt: submission.updatedAt,
+      reviewedAt: submission.reviewedAt,
       publishedWorkId: submission.status === 'published' ? submission._id : null,
       excerpt: submission.excerpt,
       content: submission.contentIds?.[0]?.body || '',
-      tags: submission.tags || [],
       reviewFeedback: submission.reviewNotes || '',
-      wordCount: submission.contentIds?.reduce((total, content) => total + (content.wordCount || 0), 0) || 0
+      wordCount: submission.contentIds?.reduce((total, content) => {
+        if (!content.body) return total;
+        return total + content.body.trim().split(/\s+/).filter(word => word.length > 0).length;
+      }, 0) || 0
     }));
   }
 
@@ -543,7 +495,7 @@ class SubmissionService {
         slug: uniqueSlug,
         metaTitle: seoData.metaTitle || submission.title,
         metaDescription: seoData.metaDescription || submission.excerpt,
-        keywords: seoData.keywords || submission.tags,
+        keywords: seoData.keywords || [],
         ogImage: seoData.ogImage || submission.imageUrl,
         canonical: seoData.canonical,
         publishSettings: {
@@ -564,9 +516,6 @@ class SubmissionService {
       throw new Error('Published submission not found');
     }
 
-    // Increment view count
-    await submission.incrementViews();
-
     return {
       _id: submission._id,
       title: submission.title,
@@ -576,15 +525,11 @@ class SubmissionService {
       authorId: submission.userId._id,
       publishedAt: submission.reviewedAt || submission.createdAt,
       readingTime: submission.readingTime,
-      viewCount: submission.viewCount + 1,
-      likeCount: submission.likeCount,
-      tags: submission.tags,
       imageUrl: submission.imageUrl,
       excerpt: submission.excerpt,
       contents: submission.contentIds,
       seo: submission.seo,
-      createdAt: submission.createdAt,
-      updatedAt: submission.updatedAt
+      createdAt: submission.createdAt
     };
   }
 
