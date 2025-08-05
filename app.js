@@ -31,6 +31,9 @@ const security = require('./middleware/security');
 
 const app = express();
 
+// Configure Express to trust proxy (required for Nginx reverse proxy)
+app.set('trust proxy', true);
+
 // Middleware
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 app.use(express.json({ limit: '10mb' }));
