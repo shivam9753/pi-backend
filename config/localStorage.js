@@ -16,7 +16,7 @@ class LocalImageService {
       await fs.mkdir(UPLOAD_DIR, { recursive: true });
       
       // Create subdirectories for different content types
-      const subdirs = ['articles', 'essays', 'stories', 'poems', 'general'];
+      const subdirs = ['articles', 'essays', 'stories', 'poems', 'general', 'submissions'];
       for (const subdir of subdirs) {
         await fs.mkdir(path.join(UPLOAD_DIR, subdir), { recursive: true });
       }
@@ -221,7 +221,7 @@ class LocalImageService {
       cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
       let deletedCount = 0;
-      const subdirs = ['articles', 'essays', 'stories', 'poems', 'general'];
+      const subdirs = ['articles', 'essays', 'stories', 'poems', 'general', 'submissions'];
 
       for (const subdir of subdirs) {
         const folderPath = path.join(UPLOAD_DIR, subdir);

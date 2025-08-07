@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const Submission = require('../models/Submission');
 const SubmissionService = require('../services/submissionService');
-const { authenticateUser, requireReviewer } = require('../middleware/auth');
+const { authenticateUser, requireReviewer, requireAdmin } = require('../middleware/auth');
 const { 
   validateSubmissionCreation, 
   validateSubmissionUpdate, 
@@ -14,6 +14,7 @@ const {
 
 // Import ImageService for S3/local storage handling
 const { ImageService } = require('../config/imageService');
+const { spawn } = require('child_process');
 
 const router = express.Router();
 
@@ -30,6 +31,51 @@ const upload = multer({
   }
 });
 
+// GET /api/submissions/:id/history - Get submission with full history
+router.get('/:id/history', authenticateUser, validateObjectId('id'), async (req, res) => {
+  try {
+    const submission = await Submission.findById(req.params.id)
+      .populate('userId', 'name username email')
+      .populate('history.user', 'name username email');
+    
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+    
+    // Check permissions - only reviewer/admin or submission owner can view
+    const isOwner = submission.userId._id.toString() === req.user._id.toString();
+    const isReviewer = ['reviewer', 'admin'].includes(req.user.role);
+    
+    if (!isOwner && !isReviewer) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    // Build complete history including initial submission
+    const history = [
+      {
+        action: 'submitted',
+        status: 'pending_review',
+        timestamp: submission.createdAt,
+        user: {
+          _id: submission.userId._id,
+          name: submission.userId.name,
+          username: submission.userId.username,
+          email: submission.userId.email
+        },
+        notes: 'Submission created'
+      },
+      ...submission.history
+    ];
+    
+    res.json({ 
+      _id: submission._id,
+      history 
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching submission history', error: error.message });
+  }
+});
+
 // GET /api/submissions - Consolidated endpoint for submissions with status filtering
 router.get('/', validatePagination, async (req, res) => {
   try {
@@ -37,15 +83,22 @@ router.get('/', validatePagination, async (req, res) => {
     
     // Build query based on status
     const query = {};
-    if (status) query.status = status;
+    if (status) {
+      // Handle special status for published and draft
+      if (status === 'published_and_draft') {
+        query.status = { $in: ['published', 'draft'] };
+      } else {
+        query.status = status;
+      }
+    }
     if (type) query.submissionType = type;
     
     // Different field selection based on status
     let selectFields;
-    if (status === 'published') {
-      selectFields = 'title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId seo';
+    if (status === 'published' || status === 'published_and_draft') {
+      selectFields = 'title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId seo status';
     } else {
-      selectFields = 'title excerpt imageUrl readingTime submissionType tags userId reviewedBy createdAt reviewedAt';
+      selectFields = 'title excerpt imageUrl readingTime submissionType tags userId reviewedBy createdAt reviewedAt status';
     }
     
     const submissions = await Submission.find(query)
@@ -79,6 +132,24 @@ router.get('/', validatePagination, async (req, res) => {
           username: sub.userId.username,
           profileImage: sub.userId.profileImage
         }
+      }));
+    } else if (status === 'published_and_draft') {
+      // Special case for published_and_draft - include status field
+      transformedSubmissions = submissions.map(sub => ({
+        _id: sub._id,
+        title: sub.title,
+        submissionType: sub.submissionType,
+        excerpt: sub.excerpt,
+        imageUrl: sub.imageUrl,
+        readingTime: sub.readingTime,
+        tags: sub.tags,
+        status: sub.status,
+        submitterName: sub.userId?.username || 'Unknown',
+        reviewerName: sub.reviewedBy?.username || 'Unknown',
+        createdAt: sub.createdAt,
+        reviewedAt: sub.reviewedAt,
+        viewCount: sub.viewCount || 0,
+        likeCount: sub.likeCount || 0
       }));
     } else {
       transformedSubmissions = submissions.map(sub => ({
@@ -262,7 +333,56 @@ router.get('/user/me', authenticateUser, async (req, res) => {
   }
 });
 
-// PUT /api/submissions/:id - Update submission
+// PUT /api/submissions/:id/resubmit - User resubmit needs_revision submission
+router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSubmissionUpdate, async (req, res) => {
+  try {
+    const Submission = require('../models/Submission');
+    const Content = require('../models/Content');
+    
+    const submission = await Submission.findById(req.params.id);
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+    
+    // Check if user owns this submission
+    if (submission.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Can only resubmit your own submissions' });
+    }
+    
+    // Check if submission is in needs_revision or draft status
+    if (!['needs_revision', 'draft'].includes(submission.status)) {
+      return res.status(400).json({ message: 'Can only resubmit submissions that need revision or are in draft' });
+    }
+    
+    // Update submission
+    Object.assign(submission, req.body);
+    
+    // Add history entry and change status to pending_review
+    await submission.changeStatus('pending_review', req.user._id, 'Resubmitted after revision');
+    
+    // Update contents if provided
+    if (req.body.contents && Array.isArray(req.body.contents)) {
+      for (const contentData of req.body.contents) {
+        if (contentData._id) {
+          await Content.findByIdAndUpdate(contentData._id, {
+            title: contentData.title,
+            body: contentData.body
+          });
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Submission resubmitted successfully',
+      submission
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error resubmitting submission', error: error.message });
+  }
+});
+
+// PUT /api/submissions/:id - Update submission (admin/reviewer only)
 router.put('/:id', authenticateUser, requireReviewer, validateObjectId('id'), validateSubmissionUpdate, async (req, res) => {
   try {
     const Submission = require('../models/Submission');
@@ -490,8 +610,8 @@ router.delete('/:id/image', authenticateUser, requireReviewer, validateObjectId(
   }
 });
 
-// DELETE /api/submissions/:id - Delete submission
-router.delete('/:id', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+// DELETE /api/submissions/:id - Delete submission (admin only)
+router.delete('/:id', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
   try {
     const Submission = require('../models/Submission');
     
@@ -536,6 +656,32 @@ router.delete('/:id', authenticateUser, requireReviewer, validateObjectId('id'),
       return res.status(404).json({ message: error.message });
     }
     res.status(500).json({ message: 'Error deleting submission', error: error.message });
+  }
+});
+
+// PATCH /api/submissions/:id/unpublish - Unpublish submission (admin only)
+router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
+  try {
+    const { notes } = req.body;
+    
+    const submission = await Submission.findById(req.params.id);
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+    
+    if (submission.status !== 'published') {
+      return res.status(400).json({ message: 'Only published submissions can be unpublished' });
+    }
+    
+    await submission.changeStatus('draft', req.user._id, notes || 'Unpublished by admin');
+    
+    res.json({
+      success: true,
+      message: 'Submission unpublished successfully',
+      submission: await Submission.findById(req.params.id).populate('userId', 'username').populate('history.user', 'username')
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error unpublishing submission', error: error.message });
   }
 });
 
@@ -593,6 +739,75 @@ router.patch('/:id/seo', authenticateUser, requireReviewer, validateObjectId('id
       return res.status(400).json({ message: error.message });
     }
     res.status(500).json({ message: 'Error updating SEO configuration', error: error.message });
+  }
+});
+
+router.post('/:id/analyze', async (req, res) => {
+  try {
+    const submissionId = req.params.id;
+    
+    // Get submission text - either from request body or fetch from database
+    let submissionText;
+    if (req.body.submissionText) {
+      submissionText = req.body.submissionText;
+    } else {
+      // If you need to fetch from database first:
+      // const submission = await Submission.findById(submissionId);
+      // submissionText = submission.content;
+    }
+    
+    if (!submissionText) {
+      return res.status(400).json({ error: 'No submission text provided' });
+    }
+    
+    // Path to your Python analysis script
+        const pythonScript = path.join('C:', 'pi-engine', 'models', 'analyze.py');
+    
+    // Use full Python path instead of just 'python'
+    const pythonPath = 'C:\\Program Files\\Python313\\python.exe';
+    
+    const python = spawn(pythonPath, [pythonScript]);
+    python.stdin.write(JSON.stringify({ text: submissionText }));
+    python.stdin.end();
+    
+    let result = '';
+    let error = '';
+    
+    python.stdout.on('data', (data) => {
+      result += data.toString();
+    });
+    
+    python.stderr.on('data', (data) => {
+      error += data.toString();
+    });
+    
+    python.on('close', (code) => {
+      if (code !== 0) {
+        return res.status(500).json({ error: 'Python script failed', details: error });
+      }
+      
+      try {
+        const analysis = JSON.parse(result);
+        res.json({
+          submissionId,
+          analysis: {
+            quality: analysis.quality_score,
+            style: analysis.detected_style,
+            themes: analysis.themes,
+            plagiarism: analysis.plagiarism_score,
+            confidence: analysis.confidence,
+            description: analysis.description
+          },
+          timestamp: new Date()
+        });
+      } catch (parseError) {
+        res.status(500).json({ error: 'Failed to parse analysis result' });
+      }
+    });
+    
+  } catch (error) {
+    console.error('Analysis error:', error);
+    res.status(500).json({ error: 'Analysis failed' });
   }
 });
 

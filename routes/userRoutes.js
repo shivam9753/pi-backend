@@ -204,6 +204,50 @@ router.post('/:id/change-password', authenticateUser, validateObjectId('id'), as
   }
 });
 
+// PATCH /api/users/:id/fix-profile-completion - Fix profile completion status (temporary)
+router.patch('/:id/fix-profile-completion', authenticateUser, validateObjectId('id'), async (req, res) => {
+  try {
+    // Users can only fix their own profile
+    if (req.user._id.toString() !== req.params.id) {
+      return res.status(403).json({ message: 'Can only fix your own profile' });
+    }
+
+    const User = require('../models/User');
+    const user = await User.findById(req.params.id);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if user has name and bio (indicating completed profile)
+    const hasCompletedProfile = user.name && 
+                               user.name.trim() !== '' && 
+                               user.name !== 'Google authenticated user' &&
+                               user.bio && 
+                               user.bio.trim() !== '' && 
+                               user.bio !== 'Google authenticated user';
+
+    if (hasCompletedProfile && !user.profileCompleted) {
+      user.profileCompleted = true;
+      await user.save();
+      
+      res.json({
+        message: 'Profile completion status fixed',
+        user: user.toPublicJSON(),
+        fixed: true
+      });
+    } else {
+      res.json({
+        message: 'No fix needed',
+        user: user.toPublicJSON(),
+        fixed: false
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Error fixing profile completion', error: error.message });
+  }
+});
+
 // DELETE /api/users/:id - Delete user (admin only)
 router.delete('/:id', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
   try {

@@ -18,9 +18,9 @@ const validateUserRegistration = [
     .normalizeEmail()
     .withMessage('Valid email is required'),
   body('username')
-    .isLength({ min: 2, max: 30 })
+    .isLength({ min: 2, max: 40 })
     .matches(/^[a-zA-Z0-9_-]+$/)
-    .withMessage('Username must be 2-30 characters and contain only letters, numbers, underscores, and hyphens'),
+    .withMessage('Username must be 2-40 characters and contain only letters, numbers, underscores, and hyphens'),
   body('password')
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters long'),
@@ -34,13 +34,36 @@ const validateUserRegistration = [
 const validateUserUpdate = [
   body('username')
     .optional()
-    .isLength({ min: 2, max: 30 })
+    .isLength({ min: 2, max: 40 })
     .matches(/^[a-zA-Z0-9_-]+$/)
-    .withMessage('Username must be 2-30 characters and contain only letters, numbers, underscores, and hyphens'),
+    .withMessage('Username must be 2-40 characters and contain only letters, numbers, underscores, and hyphens'),
+  body('name')
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage('Name must be less than 100 characters'),
   body('bio')
     .optional()
     .isLength({ max: 500 })
     .withMessage('Bio must be less than 500 characters'),
+  body('profileImage')
+    .optional()
+    .custom((value) => {
+      // Allow localhost URLs for development
+      if (value.startsWith('http://localhost:')) {
+        return true;
+      }
+      // Allow S3 URLs and other valid URLs
+      try {
+        new URL(value);
+        return true;
+      } catch {
+        throw new Error('Profile image URL must be valid');
+      }
+    }),
+  body('profileCompleted')
+    .optional()
+    .isBoolean()
+    .withMessage('Profile completed must be a boolean value'),
   body('socialLinks.website')
     .optional()
     .isURL()
@@ -110,8 +133,12 @@ const validateSubmissionUpdate = [
 
 const validateStatusUpdate = [
   body('status')
-    .isIn(['pending_review', 'accepted', 'rejected', 'published'])
-    .withMessage('Status must be pending_review, accepted, rejected, or published'),
+    .isIn(['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published'])
+    .withMessage('Status must be pending_review, in_progress, needs_revision, accepted, rejected, draft, or published'),
+  body('notes')
+    .optional()
+    .isLength({ max: 1000 })
+    .withMessage('Notes must be less than 1000 characters'),
   handleValidationErrors
 ];
 

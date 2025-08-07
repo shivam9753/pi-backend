@@ -59,7 +59,7 @@ class SubmissionService {
     // Use .select() to only fetch required fields - exclude large fields like description
     const submissions = await Submission.find(query)
       .select('title excerpt imageUrl readingTime reviewedAt submissionType tags userId reviewedBy')
-      .populate('userId', 'username')
+      .populate('userId', 'name username')
       .populate('reviewedBy', 'username')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
@@ -78,7 +78,7 @@ class SubmissionService {
       reviewedAt: sub.reviewedAt,
       submissionType: sub.submissionType,
       tags: sub.tags,
-      submitterName: sub.userId?.username || 'Unknown',
+      submitterName: sub.userId?.name || sub.userId?.username || 'Unknown',
       reviewerName: sub.reviewedBy?.username || 'Unknown'
     }));
 
@@ -103,7 +103,7 @@ class SubmissionService {
     // Use .select() to exclude large fields like description and contentIds for listing
     const submissions = await Submission.find(query)
       .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId')
-      .populate('userId', 'username email profileImage')
+      .populate('userId', 'name username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip))
@@ -122,6 +122,7 @@ class SubmissionService {
         readingTime: sub.readingTime,
         author: {
           _id: sub.userId._id,
+          name: sub.userId.name,
           username: sub.userId.username,
           profileImage: sub.userId.profileImage
         }
@@ -139,7 +140,7 @@ class SubmissionService {
 
   static async getSubmissionWithContent(id) {
     const submission = await Submission.findById(id)
-      .populate('userId', 'username email profileImage')
+      .populate('userId', 'name username email profileImage')
       .populate('contentIds')
       .populate('reviewedBy', 'username');
 
@@ -164,7 +165,7 @@ class SubmissionService {
       _id: id, 
       status: 'published' 
     })
-      .populate('userId', 'username email profileImage')
+      .populate('userId', 'name username email profileImage')
       .populate('contentIds');
 
     if (!submission) {
@@ -209,8 +210,15 @@ class SubmissionService {
       throw new Error('Submission not found');
     }
 
-    if (submission.status !== 'pending_review') {
-      throw new Error('Only pending submissions can be reviewed');
+    // Allow reviewing submissions in various states for different actions
+    const allowedStatuses = ['pending_review', 'in_progress'];
+    if (reviewData.status === 'needs_revision') {
+      // For revision requests, allow needs_revision status as well (in case of re-review)
+      allowedStatuses.push('needs_revision');
+    }
+    
+    if (!allowedStatuses.includes(submission.status)) {
+      throw new Error(`Only submissions with status ${allowedStatuses.join(', ')} can be reviewed`);
     }
 
     // Create review record
@@ -242,7 +250,7 @@ class SubmissionService {
 
     const submissions = await Submission.find(query)
       .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId')
-      .populate('userId', 'username email profileImage')
+      .populate('userId', 'name username email profileImage')
       .sort({ reviewedAt: -1 })
       .limit(parseInt(limit))
       .lean(); // Use lean() for better performance
@@ -331,7 +339,7 @@ class SubmissionService {
 
     const submissions = await Submission.find(query)
       .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId')
-      .populate('userId', 'username email profileImage')
+      .populate('userId', 'name username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip))
@@ -350,6 +358,7 @@ class SubmissionService {
         readingTime: sub.readingTime,
         author: {
           _id: sub.userId._id,
+          name: sub.userId.name,
           username: sub.userId.username,
           profileImage: sub.userId.profileImage
         }
@@ -459,10 +468,13 @@ class SubmissionService {
       excerpt: submission.excerpt,
       content: submission.contentIds?.[0]?.body || '',
       reviewFeedback: submission.reviewNotes || '',
+      revisionNotes: submission.revisionNotes || '', // Add revision notes for needs_revision status
       wordCount: submission.contentIds?.reduce((total, content) => {
         if (!content.body) return total;
         return total + content.body.trim().split(/\s+/).filter(word => word.length > 0).length;
-      }, 0) || 0
+      }, 0) || 0,
+      createdAt: submission.createdAt,
+      updatedAt: submission.updatedAt
     }));
   }
 
@@ -532,6 +544,7 @@ class SubmissionService {
       createdAt: submission.createdAt
     };
   }
+  
 
   static async updateSEO(id, seoData) {
     const submission = await Submission.findById(id);

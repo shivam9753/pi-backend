@@ -14,23 +14,122 @@ const router = express.Router();
 // Apply authentication middleware to all review routes
 router.use(authenticateUser);
 
-// GET /api/reviews/pending - Get submissions pending review
+// GET /api/reviews/pending - Get submissions pending review and in progress with advanced filtering
 router.get('/pending', requireReviewer, validatePagination, async (req, res) => {
   try {
-    const { limit = 20, skip = 0, sortBy = 'createdAt', order = 'asc', type } = req.query;
+    const { 
+      limit = 20, 
+      skip = 0, 
+      sortBy = 'createdAt', 
+      order = 'asc', 
+      type, 
+      status,
+      dateFrom,
+      dateTo,
+      search,
+      authorType, // 'new' or 'returning'
+      wordLength // 'quick' (<200), 'medium' (200-500), 'long' (>500)
+    } = req.query;
     
-    const query = { status: 'pending_review' };
+    // Default to both pending_review and in_progress, or filter by specific status
+    const query = status ? { status } : { status: { $in: ['pending_review', 'in_progress'] } };
+    
+    // Content type filter
     if (type) query.submissionType = type;
     
-    const submissions = await Submission.find(query)
-      .populate('userId', 'username')
-      .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip));
-
-    const total = await Submission.countDocuments(query);
+    // Date range filter
+    if (dateFrom || dateTo) {
+      query.createdAt = {};
+      if (dateFrom) query.createdAt.$gte = new Date(dateFrom);
+      if (dateTo) query.createdAt.$lte = new Date(dateTo);
+    }
     
-    // Return only required fields for display
+    // Search filter (title, description, content)
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Build the aggregation pipeline for complex filtering
+    const pipeline = [
+      { $match: query },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $lookup: {
+          from: 'submissions',
+          let: { userId: '$userId' },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ['$userId', '$$userId'] }, { $eq: ['$status', 'published'] }] } } },
+            { $count: 'count' }
+          ],
+          as: 'publishedCount'
+        }
+      }
+    ];
+    
+    // Add author type filter
+    if (authorType === 'new') {
+      pipeline.push({
+        $match: {
+          $or: [
+            { publishedCount: { $size: 0 } },
+            { 'publishedCount.0.count': { $eq: 0 } }
+          ]
+        }
+      });
+    } else if (authorType === 'returning') {
+      pipeline.push({
+        $match: {
+          'publishedCount.0.count': { $gt: 0 }
+        }
+      });
+    }
+    
+    // Add word length filter
+    if (wordLength) {
+      let readingTimeFilter = {};
+      switch (wordLength) {
+        case 'quick':
+          readingTimeFilter = { readingTime: { $lte: 1 } }; // ~200 words
+          break;
+        case 'medium':
+          readingTimeFilter = { readingTime: { $gt: 1, $lte: 3 } }; // 200-500 words
+          break;
+        case 'long':
+          readingTimeFilter = { readingTime: { $gt: 3 } }; // >500 words
+          break;
+      }
+      if (Object.keys(readingTimeFilter).length > 0) {
+        pipeline.push({ $match: readingTimeFilter });
+      }
+    }
+    
+    // Add sorting and pagination
+    pipeline.push(
+      { $sort: { [sortBy]: order === 'asc' ? 1 : -1 } },
+      { $skip: parseInt(skip) },
+      { $limit: parseInt(limit) }
+    );
+    
+    const submissions = await Submission.aggregate(pipeline);
+    
+    // Get total count for pagination
+    const countPipeline = pipeline.slice(0, -3); // Remove sort, skip, limit
+    countPipeline.push({ $count: 'total' });
+    const totalResult = await Submission.aggregate(countPipeline);
+    const total = totalResult.length > 0 ? totalResult[0].total : 0;
+    
+    // Return optimized submission data
     const optimizedSubmissions = submissions.map(sub => ({
       _id: sub._id,
       title: sub.title,
@@ -38,8 +137,10 @@ router.get('/pending', requireReviewer, validatePagination, async (req, res) => 
       imageUrl: sub.imageUrl,
       readingTime: sub.readingTime,
       submissionType: sub.submissionType,
+      status: sub.status,
       tags: sub.tags,
-      submitterName: sub.userId?.username || 'Unknown',
+      submitterName: sub.user?.name || sub.user?.username || 'Unknown',
+      isNewAuthor: !sub.publishedCount || sub.publishedCount.length === 0 || sub.publishedCount[0]?.count === 0,
       createdAt: sub.createdAt
     }));
     
@@ -67,6 +168,31 @@ router.get('/accepted', requireReviewer, validatePagination, async (req, res) =>
   }
 });
 
+// POST /api/reviews/:id/move-to-progress - Move submission to in_progress
+router.post('/:id/move-to-progress', requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const { notes } = req.body;
+    
+    const submission = await Submission.findById(req.params.id);
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+    
+    if (!['pending_review'].includes(submission.status)) {
+      return res.status(400).json({ message: 'Only pending submissions can be moved to in progress' });
+    }
+    
+    await submission.changeStatus('in_progress', req.user._id, notes || 'Moved to in progress for review');
+    
+    res.json({
+      message: 'Submission moved to in progress',
+      submission: await Submission.findById(req.params.id).populate('userId', 'username').populate('history.user', 'username')
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error moving submission to in progress', error: error.message });
+  }
+});
+
 // POST /api/reviews/:id/approve - Approve submission
 router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req, res) => {
   try {
@@ -80,6 +206,12 @@ router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req,
       rating: rating
     };
 
+    // First update the submission status with history tracking
+    const submission = await Submission.findById(req.params.id);
+    if (submission && ['pending_review', 'in_progress'].includes(submission.status)) {
+      await submission.changeStatus('accepted', req.user._id, reviewNotes || 'Submission approved');
+    }
+    
     const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
     
     res.json({
@@ -88,7 +220,7 @@ router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req,
       review: result.review
     });
   } catch (error) {
-    if (error.message === 'Submission not found' || error.message === 'Only pending submissions can be reviewed') {
+    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
       return res.status(400).json({ message: error.message });
     }
     res.status(500).json({ message: 'Error approving submission', error: error.message });
@@ -112,6 +244,12 @@ router.post('/:id/reject', requireReviewer, validateObjectId('id'), async (req, 
       rating: rating
     };
 
+    // First update the submission status with history tracking
+    const submission = await Submission.findById(req.params.id);
+    if (submission && ['pending_review', 'in_progress'].includes(submission.status)) {
+      await submission.changeStatus('rejected', req.user._id, reviewNotes.trim());
+    }
+    
     const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
     
     res.json({
@@ -120,7 +258,7 @@ router.post('/:id/reject', requireReviewer, validateObjectId('id'), async (req, 
       review: result.review
     });
   } catch (error) {
-    if (error.message === 'Submission not found' || error.message === 'Only pending submissions can be reviewed') {
+    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
       return res.status(400).json({ message: error.message });
     }
     res.status(500).json({ message: 'Error rejecting submission', error: error.message });
@@ -144,6 +282,12 @@ router.post('/:id/revision', requireReviewer, validateObjectId('id'), async (req
       rating: rating
     };
 
+    // First update the submission status with history tracking
+    const submission = await Submission.findById(req.params.id);
+    if (submission && ['pending_review', 'in_progress'].includes(submission.status)) {
+      await submission.changeStatus('needs_revision', req.user._id, reviewNotes.trim());
+    }
+    
     const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
     
     res.json({
@@ -152,7 +296,7 @@ router.post('/:id/revision', requireReviewer, validateObjectId('id'), async (req
       review: result.review
     });
   } catch (error) {
-    if (error.message === 'Submission not found' || error.message === 'Only pending submissions can be reviewed') {
+    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
       return res.status(400).json({ message: error.message });
     }
     res.status(500).json({ message: 'Error requesting revision', error: error.message });

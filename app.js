@@ -50,11 +50,11 @@ require('./models/Review');
 // Import route modules
 const userRoutes = require('./routes/userRoutes');
 const authRoutes = require('./routes/authRoutes');
-const contentRoutes = require('./routes/contentRoutes');
 const submissionRoutes = require('./routes/submissionRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const promptRoutes = require('./routes/prompts');
 const imageRoutes = require('./routes/imageRoutes');
+const poetryAnalysis = require('./routes/poetry-analysis');
 
 // Import security middleware
 const security = require('./middleware/security');
@@ -114,11 +114,11 @@ app.use('/api/images', security.upload);
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/content', contentRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/submissions', submissionRoutes);
 app.use('/api/prompts', promptRoutes);
 app.use('/api/images', imageRoutes);
+
 
 // Error handling middleware
 app.use((err, req, res, next) => {

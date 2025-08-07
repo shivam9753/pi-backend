@@ -27,7 +27,7 @@ class UserService {
       username,
       password: hashedPassword,
       bio: bio || '',
-      socialLinks: socialLinks || {}
+      needsProfileCompletion: !bio // If no bio provided, needs completion
     });
 
     await user.save();
@@ -36,7 +36,7 @@ class UserService {
     const token = generateToken(user._id);
 
     return {
-      user: user.toPublicJSON(),
+      user,
       token
     };
   }
@@ -58,7 +58,7 @@ class UserService {
     const token = generateToken(user._id);
 
     return {
-      user: user.toPublicJSON(),
+      user,
       token
     };
   }
@@ -91,13 +91,22 @@ class UserService {
   }
 
   static async updateUserProfile(userId, updateData) {
+    console.log('🔄 UserService.updateUserProfile called with:', { userId, updateData });
+    
     const user = await User.findById(userId);
     if (!user) {
       throw new Error('User not found');
     }
 
+    console.log('👤 Current user data:', {
+      name: user.name,
+      bio: user.bio,
+      profileCompleted: user.profileCompleted,
+      profileImage: user.profileImage
+    });
+
     // Update allowed fields
-    const allowedFields = ['name', 'username', 'bio', 'profileImage', 'socialLinks', 'preferences'];
+    const allowedFields = ['name', 'username', 'bio', 'profileImage', 'socialLinks', 'preferences', 'profileCompleted'];
     const updates = {};
 
     Object.keys(updateData).forEach(key => {
@@ -105,6 +114,8 @@ class UserService {
         updates[key] = updateData[key];
       }
     });
+    
+    console.log('✅ Filtered updates to apply:', updates);
 
     // Check if username is being updated and is unique
     if (updates.username && updates.username !== user.username) {
@@ -116,6 +127,13 @@ class UserService {
 
     Object.assign(user, updates);
     await user.save();
+    
+    console.log('💾 User saved successfully:', {
+      name: user.name,
+      bio: user.bio,
+      profileCompleted: user.profileCompleted,
+      profileImage: user.profileImage
+    });
 
     return user.toPublicJSON();
   }

@@ -42,50 +42,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
-  // Temporary fields for first-time submissions
-  tempBio: {
-    type: String,
-    maxlength: 500,
-    default: ''
-  },
-  tempProfileImage: {
-    type: String,
-    default: ''
-  },
-  // Approval status for profile data
-  profileApproval: {
-    bioApproved: { type: Boolean, default: false },
-    imageApproved: { type: Boolean, default: false },
-    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    approvedAt: { type: Date }
-  },
-  socialLinks: {
-    website: { type: String, default: '' },
-    twitter: { type: String, default: '' },
-    instagram: { type: String, default: '' },
-    linkedin: { type: String, default: '' }
-  },
-  stats: {
-    totalPublished: { type: Number, default: 0 },
-    totalViews: { type: Number, default: 0 },
-    totalLikes: { type: Number, default: 0 },
-    followers: { type: Number, default: 0 },
-    following: { type: Number, default: 0 }
-  },
-  preferences: {
-    showEmail: { type: Boolean, default: false },
-    showStats: { type: Boolean, default: true },
-    allowMessages: { type: Boolean, default: true }
-  },
-  // Track if user has completed initial profile setup
-  profileCompleted: {
+  // Track if user needs to complete profile setup
+  needsProfileCompletion: {
     type: Boolean,
     default: false
-  },
-  // Track when user first registered
-  firstLogin: {
-    type: Date,
-    default: Date.now
   }
 }, {
   timestamps: true,
@@ -98,9 +58,28 @@ const userSchema = new mongoose.Schema({
 
 // Methods
 userSchema.methods.toPublicJSON = function() {
-  const user = this.toObject();
-  delete user.password;
-  return user;
+  return {
+    _id: this._id,
+    email: this.email,
+    username: this.username,
+    name: this.name,
+    role: this.role,
+    bio: this.bio,
+    profileImage: this.profileImage
+  };
+};
+
+userSchema.methods.toAuthJSON = function() {
+  return {
+    _id: this._id,
+    email: this.email,
+    username: this.username,
+    name: this.name,
+    role: this.role,
+    bio: this.bio,
+    profileImage: this.profileImage,
+    needsProfileCompletion: this.needsProfileCompletion
+  };
 };
 
 // Static methods

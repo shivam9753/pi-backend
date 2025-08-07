@@ -178,55 +178,6 @@ router.get('/content/:contentId', async (req, res) => {
   }
 });
 
-// GET /api/images/health - Check storage backend health
-router.get('/health', async (req, res) => {
-  try {
-    const healthCheck = await ImageService.healthCheck();
-    res.json(healthCheck);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// GET /api/images/config - Get storage configuration (dev only)
-router.get('/config', (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(403).json({
-      success: false,
-      message: 'Config endpoint not available in production'
-    });
-  }
-  
-  const config = ImageService.getStorageConfig();
-  res.json({
-    success: true,
-    config
-  });
-});
-
-// GET /api/images/list/:folder - List images in folder (dev only)
-router.get('/list/:folder?', async (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(403).json({
-      success: false,
-      message: 'List endpoint not available in production'
-    });
-  }
-
-  try {
-    const { folder = '' } = req.params;
-    const result = await ImageService.listImages(folder);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
 
 // Error handling middleware for multer
 router.use((error, req, res, next) => {

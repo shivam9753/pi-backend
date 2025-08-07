@@ -28,7 +28,7 @@ const submissionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending_review', 'accepted', 'rejected', 'published'],
+    enum: ['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published'],
     default: 'pending_review'
   },
   imageUrl: {
@@ -53,6 +53,37 @@ const submissionSchema = new mongoose.Schema({
   reviewedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  // Submission history tracking
+  history: [{
+    action: {
+      type: String,
+      enum: ['submitted', 'moved_to_in_progress', 'needs_revision', 'accepted', 'rejected', 'resubmitted', 'published', 'unpublished', 'moved_to_draft'],
+      required: true
+    },
+    status: {
+      type: String,
+      enum: ['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published'],
+      required: true
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now
+    },
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    notes: {
+      type: String,
+      default: ''
+    }
+  }],
+  // For needs_revision status
+  revisionNotes: {
+    type: String,
+    default: ''
   },
   // SEO Metadata
   seo: {
@@ -123,6 +154,45 @@ submissionSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
 
 submissionSchema.methods.toggleFeatured = async function() {
   this.isFeatured = !this.isFeatured;
+  return await this.save();
+};
+
+// Method to add history entry
+submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, notes = '') {
+  this.history.push({
+    action,
+    status: newStatus,
+    user: userId,
+    notes,
+    timestamp: new Date()
+  });
+  this.status = newStatus;
+  if (action === 'accepted' || action === 'rejected' || action === 'needs_revision') {
+    this.reviewedAt = new Date();
+    this.reviewedBy = userId;
+  }
+  return this;
+};
+
+// Method to change status with history tracking
+submissionSchema.methods.changeStatus = async function(newStatus, userId, notes = '') {
+  const actionMap = {
+    'in_progress': 'moved_to_in_progress',
+    'needs_revision': 'needs_revision',
+    'accepted': 'accepted',
+    'rejected': 'rejected',
+    'published': 'published',
+    'draft': 'moved_to_draft',
+    'pending_review': 'resubmitted'
+  };
+  
+  const action = actionMap[newStatus] || 'status_changed';
+  this.addHistoryEntry(action, newStatus, userId, notes);
+  
+  if (newStatus === 'needs_revision') {
+    this.revisionNotes = notes;
+  }
+  
   return await this.save();
 };
 
