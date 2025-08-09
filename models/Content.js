@@ -58,8 +58,45 @@ const contentSchema = new mongoose.Schema({
   hasInlineImages: {
     type: Boolean,
     default: false
+  },
+  // Content-level publishing
+  isPublished: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  publishedAt: {
+    type: Date
+  },
+  submissionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Submission',
+    required: true,
+    index: true
+  },
+  // SEO for individual content pieces
+  seo: {
+    slug: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      sparse: true,
+      unique: true,
+      match: /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+    },
+    metaTitle: {
+      type: String,
+      maxlength: 60,
+      trim: true
+    },
+    metaDescription: {
+      type: String,
+      maxlength: 160,
+      trim: true
+    }
   }
 }, {
+  timestamps: true,
   versionKey: false
 });
 
@@ -68,6 +105,13 @@ contentSchema.index({ userId: 1 });
 contentSchema.index({ type: 1 });
 contentSchema.index({ tags: 1 });
 contentSchema.index({ createdAt: -1 });
+// Publishing indexes
+contentSchema.index({ isPublished: 1 });
+contentSchema.index({ isPublished: 1, publishedAt: -1 });
+contentSchema.index({ isPublished: 1, tags: 1 });
+contentSchema.index({ submissionId: 1 });
+// SEO indexes
+contentSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
 
 
 // Static methods

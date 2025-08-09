@@ -54,6 +54,8 @@ const submissionRoutes = require('./routes/submissionRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const promptRoutes = require('./routes/prompts');
 const imageRoutes = require('./routes/imageRoutes');
+const purgeRoutes = require('./routes/purgeRoutes');
+const contentRoutes = require('./routes/contentRoutes');
 const poetryAnalysis = require('./routes/poetry-analysis');
 
 // Import security middleware
@@ -118,6 +120,8 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/submissions', submissionRoutes);
 app.use('/api/prompts', promptRoutes);
 app.use('/api/images', imageRoutes);
+app.use('/api/purge', purgeRoutes);
+app.use('/api/content', contentRoutes);
 
 
 // Error handling middleware

@@ -130,6 +130,21 @@ const submissionSchema = new mongoose.Schema({
         default: false
       }
     }
+  },
+  // Manual purging system  
+  eligibleForPurge: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  purgeEligibleSince: {
+    type: Date,
+    index: true
+  },
+  markedForDeletion: {
+    type: Boolean,
+    default: false,
+    index: true
   }
 }, {
   timestamps: true,
@@ -171,6 +186,9 @@ submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, n
     this.reviewedAt = new Date();
     this.reviewedBy = userId;
   }
+  
+  // Mark for purge eligibility based on status
+  this.updatePurgeEligibility();
   return this;
 };
 
@@ -193,6 +211,27 @@ submissionSchema.methods.changeStatus = async function(newStatus, userId, notes 
     this.revisionNotes = notes;
   }
   
+  return await this.save();
+};
+
+// Method to update purge eligibility based on status
+submissionSchema.methods.updatePurgeEligibility = function() {
+  const purgeableStatuses = ['rejected', 'spam'];
+  const shouldBeEligible = purgeableStatuses.includes(this.status);
+  
+  if (shouldBeEligible && !this.eligibleForPurge) {
+    this.eligibleForPurge = true;
+    this.purgeEligibleSince = new Date();
+  } else if (!shouldBeEligible && this.eligibleForPurge) {
+    // Status changed back to non-purgeable
+    this.eligibleForPurge = false;
+    this.purgeEligibleSince = null;
+  }
+};
+
+// Method to mark for deletion (soft delete)
+submissionSchema.methods.markForDeletion = async function() {
+  this.markedForDeletion = true;
   return await this.save();
 };
 
@@ -266,6 +305,38 @@ submissionSchema.statics.findBySlug = function(slug) {
   })
     .populate('userId', 'username email profileImage')
     .populate('contentIds');
+};
+
+// Manual purging static methods
+submissionSchema.statics.getPurgeableSubmissions = function(olderThanDays = 120) {
+  const cutoffDate = new Date(Date.now() - (olderThanDays * 24 * 60 * 60 * 1000));
+  
+  return this.find({
+    eligibleForPurge: true,
+    purgeEligibleSince: { $lte: cutoffDate },
+    markedForDeletion: { $ne: true }
+  })
+    .populate('userId', 'username email')
+    .sort({ purgeEligibleSince: 1 });
+};
+
+submissionSchema.statics.getPurgeStats = function() {
+  return this.aggregate([
+    {
+      $match: {
+        eligibleForPurge: true,
+        markedForDeletion: { $ne: true }
+      }
+    },
+    {
+      $group: {
+        _id: '$status',
+        count: { $sum: 1 },
+        oldestEligible: { $min: '$purgeEligibleSince' },
+        newestEligible: { $max: '$purgeEligibleSince' }
+      }
+    }
+  ]);
 };
 
 module.exports = mongoose.model('Submission', submissionSchema);
