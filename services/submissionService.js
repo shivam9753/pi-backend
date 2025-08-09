@@ -233,8 +233,7 @@ class SubmissionService {
 
     await review.save();
 
-    // Update submission
-    submission.status = reviewData.status;
+    // Update only review-related fields, not status (let route handle status with history)
     submission.reviewedAt = new Date();
     submission.reviewedBy = reviewData.reviewerId;
     await submission.save();

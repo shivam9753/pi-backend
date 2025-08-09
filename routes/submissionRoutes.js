@@ -1,6 +1,5 @@
 const express = require('express');
 const multer = require('multer');
-const path = require('path');
 const Submission = require('../models/Submission');
 const SubmissionService = require('../services/submissionService');
 const { authenticateUser, requireReviewer, requireAdmin } = require('../middleware/auth');
@@ -14,7 +13,6 @@ const {
 
 // Import ImageService for S3/local storage handling
 const { ImageService } = require('../config/imageService');
-const { spawn } = require('child_process');
 
 const router = express.Router();
 
@@ -742,73 +740,117 @@ router.patch('/:id/seo', authenticateUser, requireReviewer, validateObjectId('id
   }
 });
 
-router.post('/:id/analyze', async (req, res) => {
+// Import the new analysis service
+const AnalysisService = require('../services/analysisService');
+const analysisService = new AnalysisService();
+
+router.post('/:id/analyze', validateObjectId('id'), async (req, res) => {
   try {
     const submissionId = req.params.id;
     
-    // Get submission text - either from request body or fetch from database
-    let submissionText;
-    if (req.body.submissionText) {
-      submissionText = req.body.submissionText;
+    // Get submission with content from database
+    const submission = await SubmissionService.getSubmissionWithContent(submissionId);
+    
+    if (!submission) {
+      return res.status(404).json({ error: 'Submission not found' });
+    }
+    
+    // Extract text from submission contents
+    let submissionText = '';
+    if (submission.contents && submission.contents.length > 0) {
+      submissionText = submission.contents
+        .map(content => {
+          const cleanTitle = stripHtmlTags(content.title || '');
+          const cleanBody = stripHtmlTags(content.body || '');
+          return `${cleanTitle}\n\n${cleanBody}`;
+        })
+        .join('\n\n---\n\n');
+    } else if (req.body.submissionText) {
+      submissionText = stripHtmlTags(req.body.submissionText);
     } else {
-      // If you need to fetch from database first:
-      // const submission = await Submission.findById(submissionId);
-      // submissionText = submission.content;
+      // Fallback: use submission title and description
+      const cleanTitle = stripHtmlTags(submission.title || '');
+      const cleanDescription = stripHtmlTags(submission.description || '');
+      submissionText = `${cleanTitle}\n\n${cleanDescription}`;
     }
     
-    if (!submissionText) {
-      return res.status(400).json({ error: 'No submission text provided' });
+    if (!submissionText || submissionText.trim().length === 0) {
+      return res.status(400).json({ error: 'No submission text found to analyze' });
     }
     
-    // Path to your Python analysis script
-        const pythonScript = path.join('C:', 'pi-engine', 'models', 'analyze.py');
+    // Log the analysis request  
+    console.log(`📊 Analysis requested for submission ${submissionId}`);
+    console.log(`📝 Text length: ${submissionText.length} characters`);
+    console.log(`📝 Submission type: ${submission.submissionType}`);
     
-    // Use full Python path instead of just 'python'
-    const pythonPath = 'C:\\Program Files\\Python313\\python.exe';
+    // Use trained models from pi-engine (no fallback - fail if models unavailable)
+    const analysisResult = await analysisService.analyzeSubmission(
+      submissionText, 
+      submission.submissionType
+    );
     
-    const python = spawn(pythonPath, [pythonScript]);
-    python.stdin.write(JSON.stringify({ text: submissionText }));
-    python.stdin.end();
-    
-    let result = '';
-    let error = '';
-    
-    python.stdout.on('data', (data) => {
-      result += data.toString();
-    });
-    
-    python.stderr.on('data', (data) => {
-      error += data.toString();
-    });
-    
-    python.on('close', (code) => {
-      if (code !== 0) {
-        return res.status(500).json({ error: 'Python script failed', details: error });
-      }
-      
-      try {
-        const analysis = JSON.parse(result);
-        res.json({
-          submissionId,
-          analysis: {
-            quality: analysis.quality_score,
-            style: analysis.detected_style,
-            themes: analysis.themes,
-            plagiarism: analysis.plagiarism_score,
-            confidence: analysis.confidence,
-            description: analysis.description
-          },
-          timestamp: new Date()
-        });
-      } catch (parseError) {
-        res.status(500).json({ error: 'Failed to parse analysis result' });
-      }
+    res.json({
+      submissionId,
+      analysis: analysisResult.analysis,
+      timestamp: new Date(),
+      processing_time_ms: analysisResult.processing_time,
+      python_version: analysisResult.python_version,
+      source: analysisResult.source,
+      status: 'completed'
     });
     
   } catch (error) {
     console.error('Analysis error:', error);
-    res.status(500).json({ error: 'Analysis failed' });
+    res.status(500).json({ 
+      error: 'Analysis failed', 
+      details: error.message,
+      status: 'failed'
+    });
   }
 });
+
+// Health check endpoint for Python service
+router.get('/analysis/health', async (req, res) => {
+  try {
+    const isAvailable = await analysisService.isServiceAvailable();
+    const envCheck = await analysisService.verifyPythonEnvironment();
+    
+    res.json({
+      service_available: isAvailable,
+      python_path: analysisService.pythonPath,
+      scripts_directory: analysisService.scriptsDir,
+      timeout_ms: analysisService.timeout,
+      environment_check: envCheck,
+      timestamp: new Date()
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Health check failed',
+      details: error.message
+    });
+  }
+});
+
+// Helper function to strip HTML tags and clean text for analysis
+function stripHtmlTags(html) {
+  if (!html || typeof html !== 'string') return '';
+  
+  return html
+    // Remove HTML tags
+    .replace(/<[^>]*>/g, '')
+    // Convert HTML entities
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    // Remove extra whitespace and line breaks
+    .replace(/\s+/g, ' ')
+    .replace(/\n\s*\n/g, '\n\n')
+    // Trim whitespace
+    .trim();
+}
 
 module.exports = router;

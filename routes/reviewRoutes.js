@@ -206,13 +206,11 @@ router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req,
       rating: rating
     };
 
-    // First update the submission status with history tracking
-    const submission = await Submission.findById(req.params.id);
-    if (submission && ['pending_review', 'in_progress'].includes(submission.status)) {
-      await submission.changeStatus('accepted', req.user._id, reviewNotes || 'Submission approved');
-    }
-    
+    // Create the review record first
     const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
+    
+    // Then update submission status with history tracking
+    await result.submission.changeStatus('accepted', req.user._id, reviewNotes || 'Submission approved');
     
     res.json({
       message: 'Submission approved successfully',
