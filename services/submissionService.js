@@ -23,11 +23,25 @@ class SubmissionService {
       });
     }
 
-    // Create content items
+    // First create submission without content IDs
+    const submission = new Submission({
+      userId: actualUserId,
+      title,
+      description,
+      contentIds: [], // Empty initially
+      submissionType,
+      readingTime: 1, // Default, will be updated
+      excerpt: '' // Default, will be updated
+    });
+
+    const savedSubmission = await submission.save();
+
+    // Now create content items with submissionId
     const contentDocs = contents.map(content => ({
       ...content,
       userId: actualUserId,
-      type: content.type || submissionType
+      type: content.type || submissionType,
+      submissionId: savedSubmission._id
     }));
 
     const createdContents = await Content.create(contentDocs);
@@ -36,18 +50,12 @@ class SubmissionService {
     const readingTime = Submission.calculateReadingTime(createdContents);
     const excerpt = Submission.generateExcerpt(createdContents);
 
-    // Create submission
-    const submission = new Submission({
-      userId: actualUserId,
-      title,
-      description,
-      contentIds: createdContents.map(c => c._id),
-      submissionType,
-      readingTime,
-      excerpt
-    });
+    // Update submission with content IDs and calculated values
+    savedSubmission.contentIds = createdContents.map(c => c._id);
+    savedSubmission.readingTime = readingTime;
+    savedSubmission.excerpt = excerpt;
 
-    return await submission.save();
+    return await savedSubmission.save();
   }
 
   static async getAcceptedSubmissions(filters = {}) {
@@ -102,7 +110,7 @@ class SubmissionService {
 
     // Use .select() to exclude large fields like description and contentIds for listing
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId')
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId seo')
       .populate('userId', 'name username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
@@ -120,6 +128,8 @@ class SubmissionService {
         imageUrl: sub.imageUrl,
         publishedAt: sub.reviewedAt || sub.createdAt,
         readingTime: sub.readingTime,
+        slug: sub.seo?.slug,
+        seo: sub.seo,
         author: {
           _id: sub.userId._id,
           name: sub.userId.name,
@@ -355,6 +365,8 @@ class SubmissionService {
         imageUrl: sub.imageUrl,
         publishedAt: sub.reviewedAt || sub.createdAt,
         readingTime: sub.readingTime,
+        slug: sub.seo?.slug,
+        seo: sub.seo,
         author: {
           _id: sub.userId._id,
           name: sub.userId.name,
@@ -527,20 +539,26 @@ class SubmissionService {
       throw new Error('Published submission not found');
     }
 
+    // Clean and minimal response
     return {
       _id: submission._id,
       title: submission.title,
       description: submission.description,
       submissionType: submission.submissionType,
-      authorName: submission.userId.username,
+      authorName: submission.userId.name || submission.userId.username,
       authorId: submission.userId._id,
       publishedAt: submission.reviewedAt || submission.createdAt,
       readingTime: submission.readingTime,
       imageUrl: submission.imageUrl,
       excerpt: submission.excerpt,
-      contents: submission.contentIds,
-      seo: submission.seo,
-      createdAt: submission.createdAt
+      contents: submission.contentIds.map(content => ({
+        title: content.title,
+        body: content.body,
+        type: content.type,
+        tags: content.tags || []
+      })),
+      tags: submission.tags || [],
+      viewCount: submission.viewCount || 0
     };
   }
   

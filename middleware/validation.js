@@ -83,8 +83,8 @@ const validateSubmissionCreation = [
     .isLength({ max: 1000 })
     .withMessage('Description must be maximum 1000 characters long'),
   body('submissionType')
-    .isIn(['poem', 'story', 'article', 'quote', 'cinema_essay'])
-    .withMessage('Submission type must be poem, story, article, quote, or cinema_essay'),
+    .isIn(['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'])
+    .withMessage('Submission type must be poem, prose, article, book_review, cinema_essay, or opinion'),
   body('contents')
     .isArray({ min: 1 })
     .withMessage('At least one content item is required'),
@@ -97,8 +97,8 @@ const validateSubmissionCreation = [
     .isLength({ min: 10 })
     .withMessage('Content body must be at least 10 characters long'),
   body('contents.*.type')
-    .isIn(['poem', 'story', 'article', 'quote', 'cinema_essay'])
-    .withMessage('Content type must be poem, story, article, quote, or cinema_essay'),
+    .isIn(['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'])
+    .withMessage('Content type must be poem, prose, article, book_review, cinema_essay, or opinion'),
   handleValidationErrors
 ];
 
@@ -109,10 +109,10 @@ const validateSubmissionUpdate = [
     .isLength({ min: 3, max: 200 })
     .withMessage('Title must be 3-200 characters long'),
   body('description')
-    .optional()
+    .optional({ checkFalsy: true })
     .trim()
     .isLength({ min: 10, max: 1000 })
-    .withMessage('Description must be 10-1000 characters long'),
+    .withMessage('Description must be 10-1000 characters long when provided'),
   body('imageUrl')
     .optional()
     .custom((value) => {

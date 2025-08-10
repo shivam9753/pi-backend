@@ -19,7 +19,7 @@ const contentSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['poem', 'story', 'article', 'quote', 'cinema_essay'],
+    enum: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'],
     default: 'poem'
   },
   tags: [{

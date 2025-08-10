@@ -23,12 +23,12 @@ const submissionSchema = new mongoose.Schema({
   }],
   submissionType: {
     type: String,
-    enum: ['poem', 'story', 'article', 'quote', 'cinema_essay'],
+    enum: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'],
     required: true
   },
   status: {
     type: String,
-    enum: ['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published'],
+    enum: ['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published', 'resubmitted'],
     default: 'pending_review'
   },
   imageUrl: {
@@ -63,7 +63,7 @@ const submissionSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published'],
+      enum: ['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published', 'resubmitted'],
       required: true
     },
     timestamp: {
@@ -145,6 +145,20 @@ const submissionSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
     index: true
+  },
+  // Draft-specific fields
+  lastEditedAt: {
+    type: Date,
+    default: Date.now
+  },
+  isDraft: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  draftExpiresAt: {
+    type: Date,
+    index: true
   }
 }, {
   timestamps: true,
@@ -201,10 +215,24 @@ submissionSchema.methods.changeStatus = async function(newStatus, userId, notes 
     'rejected': 'rejected',
     'published': 'published',
     'draft': 'moved_to_draft',
-    'pending_review': 'resubmitted'
+    'pending_review': 'resubmitted',
+    'resubmitted': 'resubmitted'
   };
   
-  const action = actionMap[newStatus] || 'status_changed';
+  // Special case: detect unpublishing (published -> accepted)
+  let action = actionMap[newStatus];
+  if (this.status === 'published' && newStatus === 'accepted') {
+    action = 'unpublished';
+  }
+  
+  if (!action) {
+    throw new Error(`No action mapping defined for status: ${newStatus}`);
+  }
+  
+  // Update the status
+  this.status = newStatus;
+  
+  // Add history entry
   this.addHistoryEntry(action, newStatus, userId, notes);
   
   if (newStatus === 'needs_revision') {
@@ -303,8 +331,11 @@ submissionSchema.statics.findBySlug = function(slug) {
     'seo.slug': slug, 
     status: 'published' 
   })
-    .populate('userId', 'username email profileImage')
-    .populate('contentIds');
+    .populate('userId', 'name username email profileImage')
+    .populate({
+      path: 'contentIds',
+      select: 'title body type tags'
+    });
 };
 
 // Manual purging static methods
@@ -337,6 +368,57 @@ submissionSchema.statics.getPurgeStats = function() {
       }
     }
   ]);
+};
+
+// Draft management static methods
+submissionSchema.statics.findUserDrafts = function(userId) {
+  return this.find({
+    userId: userId,
+    isDraft: true,
+    status: 'draft'
+  })
+    .populate('contentIds')
+    .sort({ lastEditedAt: -1 });
+};
+
+submissionSchema.statics.cleanupExpiredDrafts = function() {
+  const now = new Date();
+  return this.deleteMany({
+    isDraft: true,
+    draftExpiresAt: { $lte: now }
+  });
+};
+
+submissionSchema.statics.createDraft = function(draftData) {
+  const oneWeekFromNow = new Date(Date.now() + (7 * 24 * 60 * 60 * 1000));
+  
+  return this.create({
+    ...draftData,
+    status: 'draft',
+    isDraft: true,
+    lastEditedAt: new Date(),
+    draftExpiresAt: oneWeekFromNow
+  });
+};
+
+// Instance methods for drafts
+submissionSchema.methods.updateDraft = function(updateData) {
+  const oneWeekFromNow = new Date(Date.now() + (7 * 24 * 60 * 60 * 1000));
+  
+  Object.assign(this, updateData);
+  this.lastEditedAt = new Date();
+  this.draftExpiresAt = oneWeekFromNow; // Reset expiration
+  
+  return this.save();
+};
+
+submissionSchema.methods.convertDraftToSubmission = function() {
+  this.isDraft = false;
+  this.status = 'pending_review';
+  this.draftExpiresAt = undefined;
+  this.lastEditedAt = new Date();
+  
+  return this.save();
 };
 
 module.exports = mongoose.model('Submission', submissionSchema);

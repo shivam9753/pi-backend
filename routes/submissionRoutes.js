@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const Submission = require('../models/Submission');
+const Content = require('../models/Content');
 const SubmissionService = require('../services/submissionService');
 const { authenticateUser, requireReviewer, requireAdmin } = require('../middleware/auth');
 const { 
@@ -289,9 +290,18 @@ router.get('/:id', validateObjectId('id'), async (req, res) => {
 });
 
 // GET /api/submissions/:id/contents - Get submission with contents
-router.get('/:id/contents', validateObjectId('id'), async (req, res) => {
+router.get('/:id/contents', authenticateUser, validateObjectId('id'), async (req, res) => {
   try {
     const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
+    
+    // Check if user owns this submission or has reviewer/admin rights
+    const isOwner = submission.userId._id.toString() === req.user._id.toString();
+    const isReviewer = req.user.role === 'reviewer' || req.user.role === 'admin';
+    
+    if (!isOwner && !isReviewer) {
+      return res.status(403).json({ message: 'Access denied. You can only view your own submissions.' });
+    }
+    
     res.json(submission);
   } catch (error) {
     if (error.message === 'Submission not found') {
@@ -342,7 +352,7 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
       return res.status(404).json({ message: 'Submission not found' });
     }
     
-    // Check if user owns this submission
+    // Check if user owns this submission  
     if (submission.userId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Can only resubmit your own submissions' });
     }
@@ -355,8 +365,8 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
     // Update submission
     Object.assign(submission, req.body);
     
-    // Add history entry and change status to pending_review
-    await submission.changeStatus('pending_review', req.user._id, 'Resubmitted after revision');
+    // Add history entry and change status to resubmitted
+    await submission.changeStatus('resubmitted', req.user._id, 'Resubmitted after revision');
     
     // Update contents if provided
     if (req.body.contents && Array.isArray(req.body.contents)) {
@@ -671,7 +681,7 @@ router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId(
       return res.status(400).json({ message: 'Only published submissions can be unpublished' });
     }
     
-    await submission.changeStatus('draft', req.user._id, notes || 'Unpublished by admin');
+    await submission.changeStatus('accepted', req.user._id, notes || 'Unpublished by admin');
     
     res.json({
       success: true,
@@ -852,5 +862,209 @@ function stripHtmlTags(html) {
     // Trim whitespace
     .trim();
 }
+
+// Draft management routes
+
+// GET /api/submissions/drafts/my - Get user's drafts
+router.get('/drafts/my', authenticateUser, async (req, res) => {
+  try {
+    const drafts = await Submission.findUserDrafts(req.user._id);
+    
+    const formattedDrafts = drafts.map(draft => ({
+      id: draft._id,
+      title: draft.title || 'Untitled Draft',
+      type: draft.submissionType,
+      contents: draft.contentIds || [], // Include full contents array
+      content: draft.contentIds?.[0]?.body || '',
+      excerpt: draft.excerpt || '',
+      tags: draft.contentIds?.[0]?.tags || [],
+      wordCount: draft.contentIds?.reduce((total, content) => {
+        if (!content.body) return total;
+        return total + content.body.trim().split(/\s+/).filter(word => word.length > 0).length;
+      }, 0) || 0,
+      lastEditedAt: draft.lastEditedAt,
+      draftExpiresAt: draft.draftExpiresAt,
+      createdAt: draft.createdAt,
+      updatedAt: draft.updatedAt
+    }));
+    
+    res.json({
+      success: true,
+      drafts: formattedDrafts
+    });
+  } catch (error) {
+    console.error('Error fetching user drafts:', error);
+    res.status(500).json({ message: 'Error fetching drafts', error: error.message });
+  }
+});
+
+// POST /api/submissions/drafts - Create or update draft
+router.post('/drafts', authenticateUser, async (req, res) => {
+  try {
+    const { title, description, submissionType, contents, draftId } = req.body;
+    
+    if (!submissionType) {
+      return res.status(400).json({ message: 'Submission type is required' });
+    }
+    
+    if (!contents || contents.length === 0) {
+      return res.status(400).json({ message: 'At least one content piece is required' });
+    }
+
+    let draft;
+    
+    if (draftId) {
+      // Update existing draft
+      draft = await Submission.findOne({ _id: draftId, userId: req.user._id, isDraft: true });
+      if (!draft) {
+        return res.status(404).json({ message: 'Draft not found' });
+      }
+      
+      // Update content
+      if (draft.contentIds && draft.contentIds.length > 0) {
+        await Content.deleteMany({ _id: { $in: draft.contentIds } });
+      }
+      
+      const contentDocs = contents.map(content => ({
+        ...content,
+        userId: req.user._id,
+        type: content.type || submissionType,
+        submissionId: draft._id
+      }));
+      
+      const createdContents = await Content.create(contentDocs);
+      
+      // Calculate reading time and excerpt
+      const readingTime = Submission.calculateReadingTime(createdContents);
+      const excerpt = Submission.generateExcerpt(createdContents);
+      
+      await draft.updateDraft({
+        title,
+        description,
+        submissionType,
+        contentIds: createdContents.map(c => c._id),
+        readingTime,
+        excerpt
+      });
+    } else {
+      // Create new draft
+      const submissionData = {
+        userId: req.user._id,
+        title,
+        description,
+        submissionType,
+        contentIds: []
+      };
+      
+      draft = await Submission.createDraft(submissionData);
+      
+      // Create content items
+      const contentDocs = contents.map(content => ({
+        ...content,
+        userId: req.user._id,
+        type: content.type || submissionType,
+        submissionId: draft._id
+      }));
+      
+      const createdContents = await Content.create(contentDocs);
+      
+      // Calculate reading time and excerpt
+      const readingTime = Submission.calculateReadingTime(createdContents);
+      const excerpt = Submission.generateExcerpt(createdContents);
+      
+      // Update draft with content IDs and calculated values
+      draft.contentIds = createdContents.map(c => c._id);
+      draft.readingTime = readingTime;
+      draft.excerpt = excerpt;
+      await draft.save();
+    }
+    
+    res.json({
+      success: true,
+      message: 'Draft saved successfully',
+      draft: {
+        id: draft._id,
+        title: draft.title,
+        type: draft.submissionType,
+        lastEditedAt: draft.lastEditedAt,
+        draftExpiresAt: draft.draftExpiresAt
+      }
+    });
+  } catch (error) {
+    console.error('Error saving draft:', error);
+    res.status(500).json({ message: 'Error saving draft', error: error.message });
+  }
+});
+
+// POST /api/submissions/drafts/:id/submit - Convert draft to submission
+router.post('/drafts/:id/submit', authenticateUser, validateObjectId('id'), async (req, res) => {
+  try {
+    const draft = await Submission.findOne({ 
+      _id: req.params.id, 
+      userId: req.user._id, 
+      isDraft: true 
+    });
+    
+    if (!draft) {
+      return res.status(404).json({ message: 'Draft not found' });
+    }
+    
+    await draft.convertDraftToSubmission();
+    
+    res.json({
+      success: true,
+      message: 'Draft converted to submission successfully',
+      submissionId: draft._id
+    });
+  } catch (error) {
+    console.error('Error converting draft to submission:', error);
+    res.status(500).json({ message: 'Error converting draft', error: error.message });
+  }
+});
+
+// DELETE /api/submissions/drafts/:id - Delete draft
+router.delete('/drafts/:id', authenticateUser, validateObjectId('id'), async (req, res) => {
+  try {
+    const draft = await Submission.findOne({ 
+      _id: req.params.id, 
+      userId: req.user._id, 
+      isDraft: true 
+    });
+    
+    if (!draft) {
+      return res.status(404).json({ message: 'Draft not found' });
+    }
+    
+    // Delete associated content
+    if (draft.contentIds && draft.contentIds.length > 0) {
+      await Content.deleteMany({ _id: { $in: draft.contentIds } });
+    }
+    
+    await Submission.findByIdAndDelete(req.params.id);
+    
+    res.json({
+      success: true,
+      message: 'Draft deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting draft:', error);
+    res.status(500).json({ message: 'Error deleting draft', error: error.message });
+  }
+});
+
+// Background job to cleanup expired drafts (call this from a cron job)
+router.post('/drafts/cleanup', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const result = await Submission.cleanupExpiredDrafts();
+    res.json({
+      success: true,
+      message: 'Draft cleanup completed',
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    console.error('Error cleaning up expired drafts:', error);
+    res.status(500).json({ message: 'Error cleaning up drafts', error: error.message });
+  }
+});
 
 module.exports = router;
