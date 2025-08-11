@@ -1,4 +1,5 @@
 const express = require('express');
+const User = require('../models/User');
 const UserService = require('../services/userService');
 const { authenticateUser, requireAdmin } = require('../middleware/auth');
 const { 
@@ -67,7 +68,41 @@ router.get('/:id/submission-history', validateObjectId('id'), async (req, res) =
   }
 });
 
-// POST /api/users/:id/approve-bio - Approve user bio (admin only)
+// POST /api/users/:id/approve - Consolidated approval endpoint (admin only)
+router.post('/:id/approve', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
+  try {
+    const { type, approvedBio } = req.body;
+    
+    if (!type || !['bio', 'profileImage'].includes(type)) {
+      return res.status(400).json({ 
+        message: 'Invalid approval type. Must be "bio" or "profileImage"' 
+      });
+    }
+    
+    let user;
+    let message;
+    
+    if (type === 'bio') {
+      if (!approvedBio) {
+        return res.status(400).json({ message: 'approvedBio is required for bio approval' });
+      }
+      user = await UserService.approveUserBio(req.params.id, approvedBio, req.user.userId);
+      message = 'Bio approved successfully';
+    } else if (type === 'profileImage') {
+      user = await UserService.approveUserProfileImage(req.params.id, req.user.userId);
+      message = 'Profile image approved successfully';
+    }
+    
+    res.json({ message, user });
+  } catch (error) {
+    if (error.message === 'User not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: `Error approving ${req.body.type}`, error: error.message });
+  }
+});
+
+// LEGACY: POST /api/users/:id/approve-bio - Approve user bio (admin only) - DEPRECATED
 router.post('/:id/approve-bio', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
   try {
     const { approvedBio } = req.body;
@@ -81,7 +116,7 @@ router.post('/:id/approve-bio', authenticateUser, requireAdmin, validateObjectId
   }
 });
 
-// POST /api/users/:id/approve-profile-image - Approve user profile image (admin only)
+// LEGACY: POST /api/users/:id/approve-profile-image - Approve user profile image (admin only) - DEPRECATED
 router.post('/:id/approve-profile-image', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
   try {
     const user = await UserService.approveUserProfileImage(req.params.id, req.user.userId);
@@ -115,7 +150,6 @@ router.get('/:id/published-works', validateObjectId('id'), validatePagination, a
 // GET /api/users/:id - Get user by ID
 router.get('/:id', validateObjectId('id'), async (req, res) => {
   try {
-    const User = require('../models/User');
     const user = await User.findById(req.params.id);
     
     if (!user) {
@@ -212,7 +246,6 @@ router.patch('/:id/fix-profile-completion', authenticateUser, validateObjectId('
       return res.status(403).json({ message: 'Can only fix your own profile' });
     }
 
-    const User = require('../models/User');
     const user = await User.findById(req.params.id);
     
     if (!user) {

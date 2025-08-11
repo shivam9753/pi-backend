@@ -56,7 +56,7 @@ const promptRoutes = require('./routes/prompts');
 const imageRoutes = require('./routes/imageRoutes');
 const purgeRoutes = require('./routes/purgeRoutes');
 const contentRoutes = require('./routes/contentRoutes');
-const poetryAnalysis = require('./routes/poetry-analysis');
+// const poetryAnalysis = require('./routes/poetry-analysis'); // DEPRECATED - moved to submissionRoutes
 
 // Import security middleware
 const security = require('./middleware/security');

@@ -75,22 +75,48 @@ router.get('/:id/history', authenticateUser, validateObjectId('id'), async (req,
   }
 });
 
-// GET /api/submissions - Consolidated endpoint for submissions with status filtering
+// GET /api/submissions - Consolidated endpoint for submissions with enhanced filtering
 router.get('/', validatePagination, async (req, res) => {
   try {
-    const { status, type, limit = 20, skip = 0, sortBy = 'createdAt', order = 'desc' } = req.query;
+    const { 
+      status, 
+      type, 
+      limit = 20, 
+      skip = 0, 
+      sortBy = 'createdAt', 
+      order = 'desc',
+      featured,
+      includeTypes,
+      search
+    } = req.query;
     
-    // Build query based on status
+    // Build query based on parameters
     const query = {};
+    
+    // Status filtering
     if (status) {
-      // Handle special status for published and draft
       if (status === 'published_and_draft') {
         query.status = { $in: ['published', 'draft'] };
       } else {
         query.status = status;
       }
     }
+    
+    // Type filtering
     if (type) query.submissionType = type;
+    
+    // Featured filtering
+    if (featured === 'true') query.isFeatured = true;
+    if (featured === 'false') query.isFeatured = false;
+    
+    // Search filtering
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { excerpt: { $regex: search, $options: 'i' } }
+      ];
+    }
     
     // Different field selection based on status
     let selectFields;
@@ -110,6 +136,12 @@ router.get('/', validatePagination, async (req, res) => {
       .lean();
 
     const total = await Submission.countDocuments(query);
+    
+    // Include types if requested
+    let submissionTypes = null;
+    if (includeTypes === 'true') {
+      submissionTypes = await SubmissionService.getSubmissionTypes();
+    }
     
     // Transform data based on status
     let transformedSubmissions;
@@ -166,7 +198,7 @@ router.get('/', validatePagination, async (req, res) => {
       }));
     }
     
-    res.json({
+    const response = {
       submissions: transformedSubmissions,
       total,
       pagination: {
@@ -176,7 +208,14 @@ router.get('/', validatePagination, async (req, res) => {
         totalPages: Math.ceil(total / parseInt(limit)),
         hasMore: (parseInt(skip) + parseInt(limit)) < total
       }
-    });
+    };
+    
+    // Add types if requested
+    if (submissionTypes) {
+      response.types = submissionTypes;
+    }
+    
+    res.json(response);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching submissions', error: error.message });
   }
@@ -253,7 +292,6 @@ router.get('/user/me', authenticateUser, async (req, res) => {
 // GET /api/submissions/user/:userId - Get user's submissions
 router.get('/user/:userId', validateObjectId('userId'), validatePagination, async (req, res) => {
   try {
-    const Submission = require('../models/Submission');
     const submissions = await Submission.find({ userId: req.params.userId })
       .populate('userId', 'username email profileImage')
       .sort({ createdAt: -1 })
@@ -327,25 +365,10 @@ router.post('/', validateSubmissionCreation, async (req, res) => {
   }
 });
 
-// GET /api/submissions/user/me - Get current user's submissions
-router.get('/user/me', authenticateUser, async (req, res) => {
-  try {
-    if (!req.user?.userId) {
-      return res.status(400).json({ message: 'User not authenticated' });
-    }
-    const submissions = await SubmissionService.getUserSubmissions(req.user.userId);
-    res.json({ submissions });
-  } catch (error) {
-    console.error('Error in /user/me:', error);
-    res.status(500).json({ message: 'Error fetching user submissions', error: error.message });
-  }
-});
 
 // PUT /api/submissions/:id/resubmit - User resubmit needs_revision submission
 router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSubmissionUpdate, async (req, res) => {
   try {
-    const Submission = require('../models/Submission');
-    const Content = require('../models/Content');
     
     const submission = await Submission.findById(req.params.id);
     if (!submission) {
@@ -393,8 +416,6 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
 // PUT /api/submissions/:id - Update submission (admin/reviewer only)
 router.put('/:id', authenticateUser, requireReviewer, validateObjectId('id'), validateSubmissionUpdate, async (req, res) => {
   try {
-    const Submission = require('../models/Submission');
-    const Content = require('../models/Content');
     
     const submission = await Submission.findByIdAndUpdate(
       req.params.id,
@@ -431,7 +452,6 @@ router.put('/:id', authenticateUser, requireReviewer, validateObjectId('id'), va
 // PATCH /api/submissions/:id/status - Update submission status
 router.patch('/:id/status', authenticateUser, requireReviewer, validateObjectId('id'), validateStatusUpdate, async (req, res) => {
   try {
-    const Submission = require('../models/Submission');
     
     // Get submission before updating to check for images
     const submissionBefore = await Submission.findById(req.params.id);
@@ -494,7 +514,6 @@ router.patch('/:id/status', authenticateUser, requireReviewer, validateObjectId(
 // PATCH /api/submissions/:id/featured - Toggle featured status
 router.patch('/:id/featured', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
   try {
-    const Submission = require('../models/Submission');
     const submission = await Submission.findById(req.params.id);
     
     if (!submission) {
@@ -540,7 +559,6 @@ router.post('/:id/upload-image', authenticateUser, requireReviewer, validateObje
 
     console.log('🔧 DEBUG: Image uploaded successfully to:', uploadResult.url);
 
-    const Submission = require('../models/Submission');
     const submission = await Submission.findByIdAndUpdate(
       req.params.id,
       { imageUrl: uploadResult.url },
@@ -565,7 +583,6 @@ router.post('/:id/upload-image', authenticateUser, requireReviewer, validateObje
 // DELETE /api/submissions/:id/image - Delete submission image
 router.delete('/:id/image', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
   try {
-    const Submission = require('../models/Submission');
     const submission = await Submission.findById(req.params.id);
     
     if (!submission) {
@@ -621,7 +638,6 @@ router.delete('/:id/image', authenticateUser, requireReviewer, validateObjectId(
 // DELETE /api/submissions/:id - Delete submission (admin only)
 router.delete('/:id', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
   try {
-    const Submission = require('../models/Submission');
     
     // Get submission before deleting to check for images
     const submissionToDelete = await Submission.findById(req.params.id);

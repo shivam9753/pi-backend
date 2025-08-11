@@ -1,4 +1,5 @@
 const express = require('express');
+const User = require('../models/User');
 const UserService = require('../services/userService');
 const { validateLogin, validateUserRegistration } = require('../middleware/validation');
 
@@ -50,7 +51,6 @@ router.post('/google-login', async (req, res) => {
 
   try {
     // First, check if user already exists
-    const User = require('../models/User');
     const existingUser = await User.findByEmail(email);
     
     if (existingUser) {
