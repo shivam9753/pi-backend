@@ -50,7 +50,7 @@ class SubmissionService {
     const readingTime = Submission.calculateReadingTime(createdContents);
     const excerpt = Submission.generateExcerpt(createdContents);
 
-`    // Update submission with content IDs and calculated values
+    // Update submission with content IDs and calculated values
     savedSubmission.contentIds = createdContents.map(c => c._id);
     savedSubmission.readingTime = readingTime;
     savedSubmission.excerpt = excerpt;
