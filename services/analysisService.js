@@ -98,13 +98,21 @@ except ImportError as e:
       }
 
       console.log(`✅ Pi-engine analysis completed in ${this.getProcessingTime()}ms`);
+      console.log('📊 Analysis result preview:', {
+        quality: analysis.quality,
+        themes: analysis.themes?.slice(0, 3),
+        style: analysis.style,
+        plagiarism: analysis.plagiarism,
+        has_quality_breakdown: !!analysis.quality_breakdown
+      });
 
       return {
         success: true,
         analysis: this.formatPiEngineResult({...analysis, original_text: submissionText}),
         processing_time: this.getProcessingTime(),
         python_version: await this.getPythonVersion(),
-        source: 'pi-engine-trained-models'
+        source: 'pi-engine-trained-models',
+        enhanced_format: !!analysis.quality_breakdown
       };
 
     } catch (error) {
@@ -170,7 +178,7 @@ except ImportError as e:
   }
 
   /**
-   * Format pi-engine analysis result for API response
+   * Format pi-engine analysis result for API response with enhanced quality breakdown
    */
   formatPiEngineResult(rawAnalysis) {
     // Calculate additional metrics from the text if not provided
@@ -180,15 +188,15 @@ except ImportError as e:
     const uniqueWords = new Set(words.map(word => word.toLowerCase()));
     
     // Calculate confidence based on model usage and analysis quality
-    let confidence = 85; // Base confidence for ML models
+    let confidence = rawAnalysis.confidence || 85; // Use pi-engine confidence or default
     if (!rawAnalysis.using_ml_models) confidence = 65; // Lower for fallback methods
     if (rawAnalysis.error) confidence = 30; // Much lower if there were errors
     
-    return {
-      quality: Math.round(rawAnalysis.quality || 0),
+    const result = {
+      quality: Math.round((rawAnalysis.quality || 0) * 10) / 10, // Keep 0-10 scale as requested
       style: rawAnalysis.style || 'Contemporary',
       themes: Array.isArray(rawAnalysis.themes) ? rawAnalysis.themes : ['General'],
-      plagiarism: Math.round(rawAnalysis.plagiarism || 0),
+      plagiarism: Math.round(rawAnalysis.plagiarism || 0), // Remove duplicate plagiarism_score
       confidence: confidence,
       description: rawAnalysis.notes || 'Analysis completed using trained models.',
       readability: {
@@ -196,14 +204,38 @@ except ImportError as e:
         level: this.getReadabilityLevel(this.calculateReadabilityScore(text))
       },
       sentiment: this.analyzeSentiment(text),
-      word_count: words.length,
-      reading_time: Math.ceil(words.length / 200) || 1,
+      word_count: rawAnalysis.word_count || words.length,
+      reading_time: rawAnalysis.reading_time || Math.ceil(words.length / 200) || 1,
       technical_metrics: {
-        sentence_count: sentences.length,
+        sentence_count: rawAnalysis.sentence_count || sentences.length,
         avg_sentence_length: sentences.length > 0 ? Math.round(words.length / sentences.length * 10) / 10 : null,
         vocabulary_richness: words.length > 0 ? Math.round((uniqueWords.size / words.length) * 100) / 100 : null
       }
     };
+    
+    // Add enhanced quality breakdown if available
+    if (rawAnalysis.quality_breakdown && typeof rawAnalysis.quality_breakdown === 'object') {
+      result.quality_breakdown = {
+        imagery: rawAnalysis.quality_breakdown.Imagery || 5.0,
+        sensory_details: rawAnalysis.quality_breakdown.Sensory_Details || 5.0,
+        cohesiveness: rawAnalysis.quality_breakdown.Cohesiveness || 5.0,
+        rich_language: rawAnalysis.quality_breakdown.Rich_Language || 5.0,
+        format_structure: rawAnalysis.quality_breakdown.Format_Structure || 5.0,
+        emotional_resonance: rawAnalysis.quality_breakdown.Emotional_Resonance || 5.0,
+        originality: rawAnalysis.quality_breakdown.Originality || 5.0,
+        rhythm: rawAnalysis.quality_breakdown.Rhythm || 5.0,
+        layers_of_meaning: rawAnalysis.quality_breakdown.Layers_of_Meaning || 5.0,
+        memorable_lines: rawAnalysis.quality_breakdown.Memorable_Lines || 5.0
+      };
+      
+      // Add overall breakdown score
+      const breakdown_values = Object.values(result.quality_breakdown);
+      result.quality_breakdown.overall_average = Math.round(
+        breakdown_values.reduce((sum, val) => sum + val, 0) / breakdown_values.length * 10
+      ) / 10;
+    }
+    
+    return result;
   }
 
   /**

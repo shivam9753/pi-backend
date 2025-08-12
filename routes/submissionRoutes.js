@@ -1083,4 +1083,148 @@ router.post('/drafts/cleanup', authenticateUser, requireAdmin, async (req, res) 
   }
 });
 
+// PUT /api/submissions/:id - Update existing submission
+router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionUpdate, async (req, res) => {
+  try {
+    const submission = await Submission.findById(req.params.id);
+    
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+    
+    // Check if user owns the submission
+    if (submission.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Access denied - not your submission' });
+    }
+    
+    // Only allow updates for certain statuses
+    const allowedStatuses = ['draft', 'needs_revision'];
+    if (!allowedStatuses.includes(submission.status)) {
+      return res.status(400).json({ 
+        message: `Cannot update submission with status: ${submission.status}` 
+      });
+    }
+    
+    const { title, description, submissionType, contents, status } = req.body;
+    
+    // Update submission fields
+    if (title) submission.title = title;
+    if (description !== undefined) submission.description = description;
+    if (submissionType) submission.submissionType = submissionType;
+    if (status) submission.status = status;
+    
+    // Handle content updates if provided
+    if (contents && Array.isArray(contents)) {
+      // Delete existing content items
+      if (submission.contentIds && submission.contentIds.length > 0) {
+        await Content.deleteMany({ _id: { $in: submission.contentIds } });
+      }
+      
+      // Create new content items
+      const contentDocs = contents.map(content => ({
+        userId: req.user._id,
+        title: content.title,
+        body: content.body,
+        type: content.type || submissionType,
+        tags: content.tags || []
+      }));
+      
+      const createdContents = await Content.create(contentDocs);
+      submission.contentIds = createdContents.map(c => c._id);
+      
+      // Recalculate reading time and excerpt
+      submission.readingTime = Submission.calculateReadingTime(createdContents);
+      submission.excerpt = Submission.generateExcerpt(createdContents);
+    }
+    
+    submission.updatedAt = new Date();
+    
+    await submission.save();
+    
+    res.json({
+      success: true,
+      message: 'Submission updated successfully',
+      submission
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating submission', error: error.message });
+  }
+});
+
+// PUT /api/submissions/:id/resubmit - Resubmit after revision
+router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), async (req, res) => {
+  try {
+    const submission = await Submission.findById(req.params.id);
+    
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+    
+    // Check if user owns the submission
+    if (submission.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Access denied - not your submission' });
+    }
+    
+    // Only allow resubmit for needs_revision status
+    if (submission.status !== 'needs_revision') {
+      return res.status(400).json({ 
+        message: `Cannot resubmit submission with status: ${submission.status}` 
+      });
+    }
+    
+    const { title, description, submissionType, contents } = req.body;
+    
+    // Update submission fields
+    if (title) submission.title = title;
+    if (description !== undefined) submission.description = description;
+    if (submissionType) submission.submissionType = submissionType;
+    
+    // Handle content updates
+    if (contents && Array.isArray(contents)) {
+      // Delete existing content items
+      if (submission.contentIds && submission.contentIds.length > 0) {
+        await Content.deleteMany({ _id: { $in: submission.contentIds } });
+      }
+      
+      // Create new content items
+      const contentDocs = contents.map(content => ({
+        userId: req.user._id,
+        title: content.title,
+        body: content.body,
+        type: content.type || submissionType,
+        tags: content.tags || []
+      }));
+      
+      const createdContents = await Content.create(contentDocs);
+      submission.contentIds = createdContents.map(c => c._id);
+      
+      // Recalculate reading time and excerpt
+      submission.readingTime = Submission.calculateReadingTime(createdContents);
+      submission.excerpt = Submission.generateExcerpt(createdContents);
+    }
+    
+    // Change status to resubmitted and clear revision notes
+    submission.status = 'resubmitted';
+    submission.revisionNotes = null;
+    submission.updatedAt = new Date();
+    
+    // Add to history
+    submission.addToHistory(
+      req.user._id,
+      'resubmitted',
+      'Submission resubmitted after revision'
+    );
+    
+    await submission.save();
+    
+    res.json({
+      success: true,
+      message: 'Submission resubmitted successfully',
+      submission
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error resubmitting submission', error: error.message });
+  }
+});
+
 module.exports = router;

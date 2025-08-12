@@ -122,6 +122,7 @@ app.use('/api/prompts', promptRoutes);
 app.use('/api/images', imageRoutes);
 app.use('/api/purge', purgeRoutes);
 app.use('/api/content', contentRoutes);
+app.use('/api/admin', require('./routes/adminRoutes'));
 
 
 // Error handling middleware

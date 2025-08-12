@@ -31,8 +31,8 @@ router.get('/pending', requireReviewer, validatePagination, async (req, res) => 
       wordLength // 'quick' (<200), 'medium' (200-500), 'long' (>500)
     } = req.query;
     
-    // Default to both pending_review and in_progress, or filter by specific status
-    const query = status ? { status } : { status: { $in: ['pending_review', 'in_progress'] } };
+    // Default to pending_review, in_progress, and resubmitted, or filter by specific status
+    const query = status ? { status } : { status: { $in: ['pending_review', 'in_progress', 'resubmitted'] } };
     
     // Content type filter
     if (type) query.submissionType = type;
@@ -239,7 +239,7 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
     } else {
       // For reject/revision: Update status first, then create review
       const submission = await Submission.findById(req.params.id);
-      if (submission && ['pending_review', 'in_progress'].includes(submission.status)) {
+      if (submission && ['pending_review', 'in_progress', 'resubmitted'].includes(submission.status)) {
         await submission.changeStatus(statusMap[action], req.user._id, reviewNotes.trim());
       }
       result = await SubmissionService.reviewSubmission(req.params.id, reviewData);

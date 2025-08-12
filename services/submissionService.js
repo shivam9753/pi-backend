@@ -221,7 +221,7 @@ class SubmissionService {
     }
 
     // Allow reviewing submissions in various states for different actions
-    const allowedStatuses = ['pending_review', 'in_progress'];
+    const allowedStatuses = ['pending_review', 'in_progress', 'resubmitted'];
     if (reviewData.status === 'needs_revision') {
       // For revision requests, allow needs_revision status as well (in case of re-review)
       allowedStatuses.push('needs_revision');
