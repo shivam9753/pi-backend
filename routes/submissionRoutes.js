@@ -350,14 +350,22 @@ router.get('/:id/contents', authenticateUser, validateObjectId('id'), async (req
 });
 
 // POST /api/submissions - Create new submission
-router.post('/', validateSubmissionCreation, async (req, res) => {
+router.post('/', authenticateUser, validateSubmissionCreation, async (req, res) => {
   try {
-    const submission = await SubmissionService.createSubmission(req.body);
+    // Use authenticated user's ID instead of authorId from request body
+    const submissionData = {
+      ...req.body,
+      userId: req.user._id, // Use authenticated user's database ID
+      authorId: req.user._id // For backward compatibility
+    };
+    
+    const submission = await SubmissionService.createSubmission(submissionData);
     res.status(201).json({
       message: 'Submission created successfully',
       submission
     });
   } catch (error) {
+    console.error('Submission creation error:', error);
     if (error.message === 'User not found') {
       return res.status(400).json({ message: error.message });
     }

@@ -301,7 +301,20 @@ submissionSchema.statics.generateExcerpt = function(contents, maxLength = 150) {
   const firstContent = contents[0];
   if (!firstContent.body) return '';
   
-  const text = firstContent.body.replace(/\n/g, ' ').trim();
+  // Remove all HTML tags and clean up the text
+  const text = firstContent.body
+    .replace(/<[^>]*>/g, '') // Remove all HTML tags
+    .replace(/&nbsp;/g, ' ') // Replace non-breaking spaces
+    .replace(/&amp;/g, '&')  // Decode HTML entities
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&[^;]+;/g, ' ') // Replace any other entities with space
+    .replace(/\s+/g, ' ')     // Collapse multiple whitespace to single space
+    .replace(/\n/g, ' ')      // Replace newlines with spaces
+    .trim();
+  
   return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
 };
 

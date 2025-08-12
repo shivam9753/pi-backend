@@ -539,6 +539,28 @@ class SubmissionService {
       throw new Error('Published submission not found');
     }
 
+    // Helper function to convert UUID tags to readable names
+    const convertTagsToNames = (tags) => {
+      if (!Array.isArray(tags)) return [];
+      
+      // Map UUID tags to readable names  
+      const tagMapping = {
+        'bc1f1725-d6f4-4686-8094-11c8bd39183f': 'psychology',
+        '325213e4-4607-42b2-9d5d-fd99e8228552': 'philosophy',
+        // Add more mappings as needed
+      };
+      
+      return tags.map(tag => {
+        // Check if tag is a UUID format and exists in mapping
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (uuidRegex.test(tag) && tagMapping[tag]) {
+          return tagMapping[tag];
+        }
+        // Return original tag if not a UUID or no mapping found
+        return tag;
+      });
+    };
+
     // Clean and minimal response
     return {
       _id: submission._id,
@@ -555,9 +577,9 @@ class SubmissionService {
         title: content.title,
         body: content.body,
         type: content.type,
-        tags: content.tags || []
+        tags: convertTagsToNames(content.tags || [])
       })),
-      tags: submission.tags || [],
+      tags: convertTagsToNames(submission.tags || []),
       viewCount: submission.viewCount || 0
     };
   }
