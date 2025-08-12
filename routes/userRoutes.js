@@ -41,6 +41,19 @@ router.get('/', authenticateUser, requireAdmin, validatePagination, async (req, 
   }
 });
 
+// GET /api/users/profile - Get current user's profile (must come before /:id/profile)
+router.get('/profile', authenticateUser, async (req, res) => {
+  try {
+    const profile = await UserService.getUserProfile(req.user.userId);
+    res.json({ profile });
+  } catch (error) {
+    if (error.message === 'User not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error fetching user profile', error: error.message });
+  }
+});
+
 // GET /api/users/:id/profile - Get user profile with stats
 router.get('/:id/profile', validateObjectId('id'), async (req, res) => {
   try {
