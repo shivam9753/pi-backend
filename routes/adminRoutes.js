@@ -174,4 +174,62 @@ router.put('/submissions/:id/reassign', async (req, res) => {
   }
 });
 
+// Bulk reassign multiple submissions to different user
+router.put('/submissions/bulk-reassign', async (req, res) => {
+  try {
+    const { submissionIds, newUserId } = req.body;
+
+    // Validate input
+    if (!submissionIds || !Array.isArray(submissionIds) || submissionIds.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Submission IDs array is required' 
+      });
+    }
+
+    if (!newUserId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'New user ID is required' 
+      });
+    }
+
+    // Check if new user exists
+    const newUser = await User.findById(newUserId);
+    if (!newUser) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'New user not found' 
+      });
+    }
+
+    // Update multiple submissions
+    const result = await Submission.updateMany(
+      { _id: { $in: submissionIds } },
+      { userId: newUserId }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No submissions found with provided IDs' 
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully reassigned ${result.modifiedCount} submission(s) to ${newUser.name}`,
+      reassignedCount: result.modifiedCount,
+      totalRequested: submissionIds.length
+    });
+
+  } catch (error) {
+    console.error('Bulk reassign submissions error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Internal server error' 
+    });
+  }
+});
+
 module.exports = router;
