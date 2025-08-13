@@ -97,6 +97,8 @@ router.get('/', validatePagination, async (req, res) => {
     if (status) {
       if (status === 'published_and_draft') {
         query.status = { $in: ['published', 'draft'] };
+      } else if (status === 'published_and_accepted') {
+        query.status = { $in: ['published', 'accepted'] };
       } else {
         query.status = status;
       }
