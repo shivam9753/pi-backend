@@ -1237,4 +1237,206 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), async (req
   }
 });
 
+// POST /api/submissions/:id/view - Log view with rolling window trending
+router.post('/:id/view', validateObjectId('id'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { windowDays = 7 } = req.body;
+
+    const submission = await Submission.findOne({ _id: id, status: 'published' });
+
+    if (!submission) {
+      return res.status(404).json({ message: 'Published submission not found' });
+    }
+
+    // Log the view using our rolling window method
+    await submission.logView(windowDays);
+
+    res.json({
+      success: true,
+      viewCount: submission.viewCount,
+      recentViews: submission.recentViews,
+      windowStartTime: submission.windowStartTime.toISOString(),
+      trendingScore: submission.getTrendingScore()
+    });
+
+  } catch (error) {
+    console.error('Error logging view:', error);
+    res.status(500).json({ message: 'Error logging view', error: error.message });
+  }
+});
+
+// GET /api/submissions/trending - Get trending submissions
+router.get('/trending', validatePagination, async (req, res) => {
+  try {
+    const { 
+      limit = 10, 
+      windowDays = 7, 
+      submissionType,
+      featured 
+    } = req.query;
+
+    const limitNum = Math.min(parseInt(limit) || 10, 50); // Cap at 50
+    const windowDaysNum = parseInt(windowDays) || 7;
+
+    let trendingSubmissions = await Submission.findTrending(limitNum, windowDaysNum);
+
+    // Filter by type if specified
+    if (submissionType) {
+      trendingSubmissions = trendingSubmissions.filter(s => s.submissionType === submissionType);
+    }
+
+    // Filter by featured if specified
+    if (featured === 'true') {
+      trendingSubmissions = trendingSubmissions.filter(s => s.isFeatured);
+    }
+
+    // Transform to include trending score and formatted data
+    const formattedSubmissions = trendingSubmissions.map(submission => ({
+      _id: submission._id,
+      title: submission.title,
+      description: submission.description,
+      submissionType: submission.submissionType,
+      author: {
+        _id: submission.userId._id,
+        name: submission.userId.name,
+        username: submission.userId.username,
+        profileImage: submission.userId.profileImage
+      },
+      viewCount: submission.viewCount,
+      recentViews: submission.recentViews,
+      windowStartTime: submission.windowStartTime,
+      trendingScore: submission.getTrendingScore(),
+      readingTime: submission.readingTime,
+      isFeatured: submission.isFeatured,
+      excerpt: submission.excerpt,
+      imageUrl: submission.imageUrl,
+      createdAt: submission.createdAt,
+      publishedAt: submission.reviewedAt,
+      contents: submission.contentIds?.slice(0, 1), // First content only for preview
+      tags: submission.contentIds?.[0]?.tags || []
+    }));
+
+    res.json({
+      success: true,
+      submissions: formattedSubmissions,
+      meta: {
+        total: formattedSubmissions.length,
+        limit: limitNum,
+        windowDays: windowDaysNum
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching trending submissions:', error);
+    res.status(500).json({ message: 'Error fetching trending submissions', error: error.message });
+  }
+});
+
+// GET /api/submissions/most-viewed - Get most viewed submissions
+router.get('/most-viewed', validatePagination, async (req, res) => {
+  try {
+    const { 
+      limit = 10, 
+      timeframe = 'all',
+      submissionType
+    } = req.query;
+
+    const limitNum = Math.min(parseInt(limit) || 10, 50);
+
+    let mostViewedSubmissions = await Submission.findMostViewed(limitNum, timeframe);
+
+    // Filter by type if specified
+    if (submissionType) {
+      mostViewedSubmissions = mostViewedSubmissions.filter(s => s.submissionType === submissionType);
+    }
+
+    const formattedSubmissions = mostViewedSubmissions.map(submission => ({
+      _id: submission._id,
+      title: submission.title,
+      description: submission.description,
+      submissionType: submission.submissionType,
+      author: {
+        _id: submission.userId._id,
+        name: submission.userId.name,
+        username: submission.userId.username,
+        profileImage: submission.userId.profileImage
+      },
+      viewCount: submission.viewCount,
+      recentViews: submission.recentViews || 0,
+      readingTime: submission.readingTime,
+      isFeatured: submission.isFeatured,
+      excerpt: submission.excerpt,
+      imageUrl: submission.imageUrl,
+      createdAt: submission.createdAt,
+      publishedAt: submission.reviewedAt
+    }));
+
+    res.json({
+      success: true,
+      submissions: formattedSubmissions,
+      meta: {
+        total: formattedSubmissions.length,
+        limit: limitNum,
+        timeframe
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching most viewed submissions:', error);
+    res.status(500).json({ message: 'Error fetching most viewed submissions', error: error.message });
+  }
+});
+
+// GET /api/submissions/:id/stats - Get detailed stats for a submission
+router.get('/:id/stats', validateObjectId('id'), async (req, res) => {
+  try {
+    const submission = await Submission.findOne({ 
+      _id: req.params.id, 
+      status: 'published' 
+    }).select('viewCount recentViews windowStartTime');
+
+    if (!submission) {
+      return res.status(404).json({ message: 'Published submission not found' });
+    }
+
+    res.json({
+      success: true,
+      stats: {
+        viewCount: submission.viewCount || 0,
+        recentViews: submission.recentViews || 0,
+        windowStartTime: submission.windowStartTime,
+        trendingScore: submission.getTrendingScore()
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching submission stats:', error);
+    res.status(500).json({ message: 'Error fetching submission stats', error: error.message });
+  }
+});
+
+// GET /api/submissions/analytics/trending-stats - Get trending analytics
+router.get('/analytics/trending-stats', async (req, res) => {
+  try {
+    const { windowDays = 7 } = req.query;
+    const windowDaysNum = parseInt(windowDays) || 7;
+
+    const trendingStats = await Submission.getTrendingStats(windowDaysNum);
+
+    res.json({
+      success: true,
+      stats: trendingStats,
+      meta: {
+        windowDays: windowDaysNum,
+        generatedAt: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching trending stats:', error);
+    res.status(500).json({ message: 'Error fetching trending stats', error: error.message });
+  }
+});
+
 module.exports = router;

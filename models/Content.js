@@ -68,6 +68,11 @@ const contentSchema = new mongoose.Schema({
   publishedAt: {
     type: Date
   },
+  viewCount: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   submissionId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Submission',

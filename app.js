@@ -28,11 +28,8 @@ if (envResult.error) {
 }
 
 // Log important environment variables for debugging
-console.log('Environment variables loaded:');
 console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
 console.log(`- STORAGE_TYPE: ${process.env.STORAGE_TYPE}`);
-console.log(`- S3_BUCKET_NAME: ${process.env.S3_BUCKET_NAME}`);
-console.log(`- AWS_REGION: ${process.env.AWS_REGION}`);
 console.log(`- Database: ${process.env.ATLAS_URL ? 'Configured' : 'Not configured'}`);
 
 // Ensure NODE_ENV is set correctly after loading environment file

@@ -512,4 +512,30 @@ router.post('/:contentId/unpublish', authenticateUser, requireAdmin, validateObj
   }
 });
 
+// POST /api/content/:contentId/view - Increment view count (no auth required)
+router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) => {
+  try {
+    const { contentId } = req.params;
+
+    const content = await Content.findOneAndUpdate(
+      { _id: contentId, isPublished: true },
+      { $inc: { viewCount: 1 } },
+      { new: true, select: 'viewCount' }
+    );
+
+    if (!content) {
+      return res.status(404).json({ message: 'Published content not found' });
+    }
+
+    res.json({
+      success: true,
+      viewCount: content.viewCount
+    });
+
+  } catch (error) {
+    console.error('Error incrementing view count:', error);
+    res.status(500).json({ message: 'Error updating view count', error: error.message });
+  }
+});
+
 module.exports = router;

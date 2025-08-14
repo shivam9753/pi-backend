@@ -159,6 +159,22 @@ const submissionSchema = new mongoose.Schema({
   draftExpiresAt: {
     type: Date,
     index: true
+  },
+  viewCount: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  // Trending tracking fields
+  recentViews: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  windowStartTime: {
+    type: Date,
+    default: Date.now,
+    index: true
   }
 }, {
   timestamps: true,
@@ -178,6 +194,11 @@ submissionSchema.index({ status: 1, isFeatured: 1 });
 submissionSchema.index({ status: 1, reviewedAt: -1 });
 // SEO slug index for fast URL lookups
 submissionSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
+// Trending indexes
+submissionSchema.index({ recentViews: -1 });
+submissionSchema.index({ viewCount: -1 });
+submissionSchema.index({ status: 1, recentViews: -1 });
+submissionSchema.index({ windowStartTime: 1 });
 
 // Methods
 
@@ -414,6 +435,64 @@ submissionSchema.statics.createDraft = function(draftData) {
   });
 };
 
+// Trending static methods
+submissionSchema.statics.findTrending = function(limit = 10, windowDays = 7) {
+  const windowMs = windowDays * 24 * 60 * 60 * 1000;
+  const cutoffTime = new Date(Date.now() - windowMs);
+  
+  return this.find({
+    status: 'published',
+    recentViews: { $gt: 0 },
+    windowStartTime: { $gte: cutoffTime }
+  })
+    .populate('userId', 'name username email profileImage')
+    .populate('contentIds', 'title body type tags')
+    .sort({ recentViews: -1, viewCount: -1 })
+    .limit(limit);
+};
+
+submissionSchema.statics.findMostViewed = function(limit = 10, timeframe = 'all') {
+  let query = { status: 'published', viewCount: { $gt: 0 } };
+  
+  if (timeframe !== 'all') {
+    const days = timeframe === 'week' ? 7 : timeframe === 'month' ? 30 : 365;
+    const cutoffTime = new Date(Date.now() - (days * 24 * 60 * 60 * 1000));
+    query.createdAt = { $gte: cutoffTime };
+  }
+  
+  return this.find(query)
+    .populate('userId', 'name username email profileImage')
+    .populate('contentIds', 'title body type tags')
+    .sort({ viewCount: -1 })
+    .limit(limit);
+};
+
+submissionSchema.statics.getTrendingStats = function(windowDays = 7) {
+  const windowMs = windowDays * 24 * 60 * 60 * 1000;
+  const cutoffTime = new Date(Date.now() - windowMs);
+  
+  return this.aggregate([
+    {
+      $match: {
+        status: 'published',
+        windowStartTime: { $gte: cutoffTime }
+      }
+    },
+    {
+      $group: {
+        _id: '$submissionType',
+        totalTrending: { $sum: 1 },
+        totalRecentViews: { $sum: '$recentViews' },
+        avgRecentViews: { $avg: '$recentViews' },
+        maxRecentViews: { $max: '$recentViews' }
+      }
+    },
+    {
+      $sort: { totalRecentViews: -1 }
+    }
+  ]);
+};
+
 // Instance methods for drafts
 submissionSchema.methods.updateDraft = function(updateData) {
   const oneWeekFromNow = new Date(Date.now() + (7 * 24 * 60 * 60 * 1000));
@@ -432,6 +511,33 @@ submissionSchema.methods.convertDraftToSubmission = function() {
   this.lastEditedAt = new Date();
   
   return this.save();
+};
+
+// View tracking methods
+submissionSchema.methods.logView = function(windowDays = 7) {
+  const now = new Date();
+  const windowMs = windowDays * 24 * 60 * 60 * 1000;
+  const windowStart = new Date(this.windowStartTime);
+  
+  // Check if current window has expired
+  if (now - windowStart > windowMs) {
+    // Reset window
+    this.recentViews = 1;
+    this.windowStartTime = now;
+  } else {
+    // Increment current window
+    this.recentViews = (this.recentViews || 0) + 1;
+  }
+  
+  // Always increment total views
+  this.viewCount = (this.viewCount || 0) + 1;
+  
+  return this.save();
+};
+
+submissionSchema.methods.getTrendingScore = function() {
+  if (!this.viewCount || this.viewCount === 0) return 0;
+  return Math.round((this.recentViews / this.viewCount) * 100);
 };
 
 module.exports = mongoose.model('Submission', submissionSchema);
