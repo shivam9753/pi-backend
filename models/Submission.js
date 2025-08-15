@@ -23,7 +23,7 @@ const submissionSchema = new mongoose.Schema({
   }],
   submissionType: {
     type: String,
-    enum: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'],
+    enum: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion', 'books', 'napoWrimo', 'prose', 'interview'],
     required: true
   },
   status: {
