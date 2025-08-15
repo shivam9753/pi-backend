@@ -539,7 +539,7 @@ class SubmissionService {
       throw new Error('Published submission not found');
     }
 
-    // Helper function to convert UUID tags to readable names
+    // Helper function to convert UUID tags to readable names and filter out empty tags
     const convertTagsToNames = (tags) => {
       if (!Array.isArray(tags)) return [];
       
@@ -550,15 +550,17 @@ class SubmissionService {
         // Add more mappings as needed
       };
       
-      return tags.map(tag => {
-        // Check if tag is a UUID format and exists in mapping
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (uuidRegex.test(tag) && tagMapping[tag]) {
-          return tagMapping[tag];
-        }
-        // Return original tag if not a UUID or no mapping found
-        return tag;
-      });
+      return tags
+        .filter(tag => tag && tag.trim().length > 0) // Filter out empty/null tags
+        .map(tag => {
+          // Check if tag is a UUID format and exists in mapping
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(tag) && tagMapping[tag]) {
+            return tagMapping[tag];
+          }
+          // Return original tag if not a UUID or no mapping found
+          return tag.trim();
+        });
     };
 
     // Clean and minimal response
