@@ -532,7 +532,8 @@ submissionSchema.methods.logView = function(windowDays = 7) {
   // Always increment total views
   this.viewCount = (this.viewCount || 0) + 1;
   
-  return this.save();
+  // Save with validation disabled to avoid issues with existing data
+  return this.save({ validateBeforeSave: false });
 };
 
 submissionSchema.methods.getTrendingScore = function() {

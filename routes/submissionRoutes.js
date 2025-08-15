@@ -316,6 +316,83 @@ router.get('/user/:userId', validateObjectId('userId'), validatePagination, asyn
   }
 });
 
+// GET /api/submissions/trending - Get trending submissions
+router.get('/trending', validatePagination, async (req, res) => {
+  try {
+    const { 
+      limit = 10,
+      skip = 0,
+      windowDays = 7, 
+      submissionType,
+      featured 
+    } = req.query;
+
+    const limitNum = Math.min(parseInt(limit) || 10, 50); // Cap at 50
+    const skipNum = parseInt(skip) || 0;
+    const windowDaysNum = parseInt(windowDays) || 7;
+
+    // Get more submissions than needed to handle filtering + pagination
+    const fetchLimit = limitNum + skipNum + 20; // Extra buffer for filtering
+    let trendingSubmissions = await Submission.findTrending(fetchLimit, windowDaysNum);
+
+    // Filter by type if specified
+    if (submissionType) {
+      trendingSubmissions = trendingSubmissions.filter(s => s.submissionType === submissionType);
+    }
+
+    // Filter by featured if specified
+    if (featured === 'true') {
+      trendingSubmissions = trendingSubmissions.filter(s => s.isFeatured);
+    }
+
+    // Apply pagination after filtering
+    const totalCount = trendingSubmissions.length;
+    const paginatedSubmissions = trendingSubmissions.slice(skipNum, skipNum + limitNum);
+
+    // Transform to include trending score and formatted data
+    const formattedSubmissions = paginatedSubmissions.map(submission => ({
+      _id: submission._id,
+      title: submission.title,
+      description: submission.description,
+      submissionType: submission.submissionType,
+      author: {
+        _id: submission.userId._id,
+        name: submission.userId.name,
+        username: submission.userId.username,
+        profileImage: submission.userId.profileImage
+      },
+      viewCount: submission.viewCount,
+      recentViews: submission.recentViews,
+      windowStartTime: submission.windowStartTime,
+      trendingScore: submission.getTrendingScore(),
+      readingTime: submission.readingTime,
+      isFeatured: submission.isFeatured,
+      excerpt: submission.excerpt,
+      imageUrl: submission.imageUrl,
+      createdAt: submission.createdAt,
+      publishedAt: submission.reviewedAt,
+      contents: submission.contentIds?.slice(0, 1), // First content only for preview
+      tags: submission.contentIds?.[0]?.tags || []
+    }));
+
+    res.json({
+      success: true,
+      submissions: formattedSubmissions,
+      total: totalCount,
+      meta: {
+        limit: limitNum,
+        skip: skipNum,
+        windowDays: windowDaysNum,
+        returned: formattedSubmissions.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching trending submissions:', error);
+    res.status(500).json({ message: 'Error fetching trending submissions', error: error.message });
+  }
+});
+
 // GET /api/submissions/:id - Get submission by ID
 router.get('/:id', validateObjectId('id'), async (req, res) => {
   try {
@@ -1263,73 +1340,6 @@ router.post('/:id/view', validateObjectId('id'), async (req, res) => {
   } catch (error) {
     console.error('Error logging view:', error);
     res.status(500).json({ message: 'Error logging view', error: error.message });
-  }
-});
-
-// GET /api/submissions/trending - Get trending submissions
-router.get('/trending', validatePagination, async (req, res) => {
-  try {
-    const { 
-      limit = 10, 
-      windowDays = 7, 
-      submissionType,
-      featured 
-    } = req.query;
-
-    const limitNum = Math.min(parseInt(limit) || 10, 50); // Cap at 50
-    const windowDaysNum = parseInt(windowDays) || 7;
-
-    let trendingSubmissions = await Submission.findTrending(limitNum, windowDaysNum);
-
-    // Filter by type if specified
-    if (submissionType) {
-      trendingSubmissions = trendingSubmissions.filter(s => s.submissionType === submissionType);
-    }
-
-    // Filter by featured if specified
-    if (featured === 'true') {
-      trendingSubmissions = trendingSubmissions.filter(s => s.isFeatured);
-    }
-
-    // Transform to include trending score and formatted data
-    const formattedSubmissions = trendingSubmissions.map(submission => ({
-      _id: submission._id,
-      title: submission.title,
-      description: submission.description,
-      submissionType: submission.submissionType,
-      author: {
-        _id: submission.userId._id,
-        name: submission.userId.name,
-        username: submission.userId.username,
-        profileImage: submission.userId.profileImage
-      },
-      viewCount: submission.viewCount,
-      recentViews: submission.recentViews,
-      windowStartTime: submission.windowStartTime,
-      trendingScore: submission.getTrendingScore(),
-      readingTime: submission.readingTime,
-      isFeatured: submission.isFeatured,
-      excerpt: submission.excerpt,
-      imageUrl: submission.imageUrl,
-      createdAt: submission.createdAt,
-      publishedAt: submission.reviewedAt,
-      contents: submission.contentIds?.slice(0, 1), // First content only for preview
-      tags: submission.contentIds?.[0]?.tags || []
-    }));
-
-    res.json({
-      success: true,
-      submissions: formattedSubmissions,
-      meta: {
-        total: formattedSubmissions.length,
-        limit: limitNum,
-        windowDays: windowDaysNum
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching trending submissions:', error);
-    res.status(500).json({ message: 'Error fetching trending submissions', error: error.message });
   }
 });
 
