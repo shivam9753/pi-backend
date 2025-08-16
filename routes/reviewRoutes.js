@@ -2,7 +2,7 @@ const express = require('express');
 const Submission = require('../models/Submission');
 const Review = require('../models/Review');
 const SubmissionService = require('../services/submissionService');
-const { authenticateUser, requireReviewer, requireAdmin } = require('../middleware/auth');
+const { authenticateUser, requireReviewer, requireCurator, requireAdmin } = require('../middleware/auth');
 const { 
   validateReviewCreation,
   validateObjectId,
@@ -15,7 +15,7 @@ const router = express.Router();
 router.use(authenticateUser);
 
 // GET /api/reviews/pending - Get submissions pending review and in progress with advanced filtering
-router.get('/pending', requireReviewer, validatePagination, async (req, res) => {
+router.get('/pending', requireCurator, validatePagination, async (req, res) => {
   try {
     const { 
       limit = 20, 
@@ -159,7 +159,7 @@ router.get('/pending', requireReviewer, validatePagination, async (req, res) => 
 });
 
 // GET /api/reviews/accepted - Get accepted submissions ready for publication
-router.get('/accepted', requireReviewer, validatePagination, async (req, res) => {
+router.get('/accepted', requireCurator, validatePagination, async (req, res) => {
   try {
     const result = await SubmissionService.getAcceptedSubmissions(req.query);
     res.json(result);
@@ -182,7 +182,7 @@ router.post('/:id/move-to-progress', requireReviewer, validateObjectId('id'), as
       return res.status(400).json({ message: 'Only pending submissions can be moved to in progress' });
     }
     
-    await submission.changeStatus('in_progress', req.user._id, notes || 'Moved to in progress for review');
+    await submission.changeStatus('in_progress', req.user._id, 'reviewer', notes || 'Moved to in progress for review');
     
     res.json({
       message: 'Submission moved to in progress',
@@ -234,13 +234,13 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
       // Create the review record first
       result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
       // Then update submission status with history tracking
-      await result.submission.changeStatus('accepted', req.user._id, reviewNotes || 'Submission approved');
+      await result.submission.changeStatus('accepted', req.user._id, 'reviewer', reviewNotes || 'Submission approved');
       message = 'Submission approved successfully';
     } else {
       // For reject/revision: Update status first, then create review
       const submission = await Submission.findById(req.params.id);
       if (submission && ['pending_review', 'in_progress', 'resubmitted'].includes(submission.status)) {
-        await submission.changeStatus(statusMap[action], req.user._id, reviewNotes.trim());
+        await submission.changeStatus(statusMap[action], req.user._id, 'reviewer', reviewNotes.trim());
       }
       result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
       message = action === 'reject' ? 'Submission rejected' : 'Revision requested';
@@ -276,7 +276,7 @@ router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req,
     const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
     
     // Then update submission status with history tracking
-    await result.submission.changeStatus('accepted', req.user._id, reviewNotes || 'Submission approved');
+    await result.submission.changeStatus('accepted', req.user._id, 'reviewer', reviewNotes || 'Submission approved');
     
     res.json({
       message: 'Submission approved successfully',
@@ -311,7 +311,7 @@ router.post('/:id/reject', requireReviewer, validateObjectId('id'), async (req, 
     // First update the submission status with history tracking
     const submission = await Submission.findById(req.params.id);
     if (submission && ['pending_review', 'in_progress'].includes(submission.status)) {
-      await submission.changeStatus('rejected', req.user._id, reviewNotes.trim());
+      await submission.changeStatus('rejected', req.user._id, 'reviewer', reviewNotes.trim());
     }
     
     const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
@@ -349,7 +349,7 @@ router.post('/:id/revision', requireReviewer, validateObjectId('id'), async (req
     // First update the submission status with history tracking
     const submission = await Submission.findById(req.params.id);
     if (submission && ['pending_review', 'in_progress'].includes(submission.status)) {
-      await submission.changeStatus('needs_revision', req.user._id, reviewNotes.trim());
+      await submission.changeStatus('needs_revision', req.user._id, 'reviewer', reviewNotes.trim());
     }
     
     const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
@@ -390,7 +390,7 @@ router.get('/my-reviews', requireReviewer, validatePagination, async (req, res) 
 });
 
 // GET /api/reviews/submission/:id - Get reviews for a specific submission
-router.get('/submission/:id', validateObjectId('id'), async (req, res) => {
+router.get('/submission/:id', requireCurator, validateObjectId('id'), async (req, res) => {
   try {
     const review = await Review.findBySubmissionId(req.params.id);
     
@@ -405,7 +405,7 @@ router.get('/submission/:id', validateObjectId('id'), async (req, res) => {
 });
 
 // GET /api/reviews/stats - Get review statistics
-router.get('/stats', requireReviewer, async (req, res) => {
+router.get('/stats', requireCurator, async (req, res) => {
   try {
     const { reviewerId } = req.query;
     

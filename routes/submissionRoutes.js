@@ -3,7 +3,7 @@ const multer = require('multer');
 const Submission = require('../models/Submission');
 const Content = require('../models/Content');
 const SubmissionService = require('../services/submissionService');
-const { authenticateUser, requireReviewer, requireAdmin } = require('../middleware/auth');
+const { authenticateUser, requireReviewer, requireCurator, requireAdmin } = require('../middleware/auth');
 const { 
   validateSubmissionCreation, 
   validateSubmissionUpdate, 
@@ -16,6 +16,7 @@ const {
 const { ImageService } = require('../config/imageService');
 
 const router = express.Router();
+
 
 // Use memory storage for multer since we'll handle storage through ImageService
 const upload = multer({ 
@@ -41,9 +42,9 @@ router.get('/:id/history', authenticateUser, validateObjectId('id'), async (req,
       return res.status(404).json({ message: 'Submission not found' });
     }
     
-    // Check permissions - only reviewer/admin or submission owner can view
+    // Check permissions - only curator/reviewer/admin or submission owner can view
     const isOwner = submission.userId._id.toString() === req.user._id.toString();
-    const isReviewer = ['reviewer', 'admin'].includes(req.user.role);
+    const isReviewer = ['curator', 'reviewer', 'admin'].includes(req.user.role);
     
     if (!isOwner && !isReviewer) {
       return res.status(403).json({ message: 'Access denied' });
@@ -411,9 +412,9 @@ router.get('/:id/contents', authenticateUser, validateObjectId('id'), async (req
   try {
     const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
     
-    // Check if user owns this submission or has reviewer/admin rights
+    // Check if user owns this submission or has curator/reviewer/admin rights
     const isOwner = submission.userId._id.toString() === req.user._id.toString();
-    const isReviewer = req.user.role === 'reviewer' || req.user.role === 'admin';
+    const isReviewer = req.user.role === 'curator' || req.user.role === 'reviewer' || req.user.role === 'admin';
     
     if (!isOwner && !isReviewer) {
       return res.status(403).json({ message: 'Access denied. You can only view your own submissions.' });
@@ -476,7 +477,7 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
     Object.assign(submission, req.body);
     
     // Add history entry and change status to resubmitted
-    await submission.changeStatus('resubmitted', req.user._id, 'Resubmitted after revision');
+    await submission.changeStatus('resubmitted', req.user._id, 'user', 'Resubmitted after revision');
     
     // Update contents if provided
     if (req.body.contents && Array.isArray(req.body.contents)) {
@@ -539,7 +540,7 @@ router.put('/:id', authenticateUser, requireReviewer, validateObjectId('id'), va
 });
 
 // PATCH /api/submissions/:id/status - Update submission status
-router.patch('/:id/status', authenticateUser, requireReviewer, validateObjectId('id'), validateStatusUpdate, async (req, res) => {
+router.patch('/:id/status', authenticateUser, requireCurator, validateObjectId('id'), validateStatusUpdate, async (req, res) => {
   try {
     
     // Get submission before updating to check for images
@@ -786,7 +787,7 @@ router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId(
       return res.status(400).json({ message: 'Only published submissions can be unpublished' });
     }
     
-    await submission.changeStatus('accepted', req.user._id, notes || 'Unpublished by admin');
+    await submission.changeStatus('accepted', req.user._id, 'admin', notes || 'Unpublished by admin');
     
     res.json({
       success: true,
@@ -1450,5 +1451,6 @@ router.get('/analytics/trending-stats', async (req, res) => {
     res.status(500).json({ message: 'Error fetching trending stats', error: error.message });
   }
 });
+
 
 module.exports = router;

@@ -28,8 +28,8 @@ const submissionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published', 'resubmitted'],
-    default: 'pending_review'
+    enum: ['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'rejected', 'published', 'archived', 'resubmitted'],
+    default: 'draft'
   },
   imageUrl: {
     type: String,
@@ -54,16 +54,27 @@ const submissionSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
+  // Editorial workflow fields
+  assignedTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  assignedAt: {
+    type: Date,
+    default: null
+  },
+  
   // Submission history tracking
   history: [{
     action: {
       type: String,
-      enum: ['submitted', 'moved_to_in_progress', 'needs_revision', 'accepted', 'rejected', 'resubmitted', 'published', 'unpublished', 'moved_to_draft'],
+      enum: ['submitted', 'moved_to_in_progress', 'shortlisted', 'needs_changes', 'approved', 'rejected', 'published', 'archived', 'moved_to_draft'],
       required: true
     },
     status: {
       type: String,
-      enum: ['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published', 'resubmitted'],
+      enum: ['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'rejected', 'published', 'archived', 'resubmitted'],
       required: true
     },
     timestamp: {
@@ -73,6 +84,11 @@ const submissionSchema = new mongoose.Schema({
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
+      required: true
+    },
+    userRole: {
+      type: String,
+      enum: ['user', 'curator', 'reviewer', 'admin'],
       required: true
     },
     notes: {
@@ -208,18 +224,29 @@ submissionSchema.methods.toggleFeatured = async function() {
 };
 
 // Method to add history entry
-submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, notes = '') {
+submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, userRole, notes = '') {
   this.history.push({
     action,
     status: newStatus,
     user: userId,
+    userRole,
     notes,
     timestamp: new Date()
   });
   this.status = newStatus;
-  if (action === 'accepted' || action === 'rejected' || action === 'needs_revision') {
+  if (['approved', 'rejected', 'needs_changes', 'shortlisted'].includes(action)) {
     this.reviewedAt = new Date();
     this.reviewedBy = userId;
+  }
+  
+  // Handle assignment for in_progress status
+  if (action === 'moved_to_in_progress') {
+    this.assignedTo = userId;
+    this.assignedAt = new Date();
+  } else if (['approved', 'rejected', 'needs_changes', 'shortlisted', 'published', 'archived'].includes(action)) {
+    // Clear assignment when moving to final states
+    this.assignedTo = null;
+    this.assignedAt = null;
   }
   
   // Mark for purge eligibility based on status
@@ -228,23 +255,20 @@ submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, n
 };
 
 // Method to change status with history tracking
-submissionSchema.methods.changeStatus = async function(newStatus, userId, notes = '') {
+submissionSchema.methods.changeStatus = async function(newStatus, userId, userRole, notes = '') {
   const actionMap = {
     'in_progress': 'moved_to_in_progress',
-    'needs_revision': 'needs_revision',
-    'accepted': 'accepted',
+    'shortlisted': 'shortlisted',
+    'needs_changes': 'needs_changes',
+    'approved': 'approved',
     'rejected': 'rejected',
     'published': 'published',
+    'archived': 'archived',
     'draft': 'moved_to_draft',
-    'pending_review': 'resubmitted',
-    'resubmitted': 'resubmitted'
+    'submitted': 'submitted'
   };
   
-  // Special case: detect unpublishing (published -> accepted)
-  let action = actionMap[newStatus];
-  if (this.status === 'published' && newStatus === 'accepted') {
-    action = 'unpublished';
-  }
+  const action = actionMap[newStatus];
   
   if (!action) {
     throw new Error(`No action mapping defined for status: ${newStatus}`);
@@ -254,13 +278,45 @@ submissionSchema.methods.changeStatus = async function(newStatus, userId, notes 
   this.status = newStatus;
   
   // Add history entry
-  this.addHistoryEntry(action, newStatus, userId, notes);
+  this.addHistoryEntry(action, newStatus, userId, userRole, notes);
   
-  if (newStatus === 'needs_revision') {
+  if (newStatus === 'needs_changes') {
     this.revisionNotes = notes;
   }
   
   return await this.save();
+};
+
+// Static method to check if submission can be moved to in_progress
+submissionSchema.statics.canMoveToInProgress = async function(submissionId) {
+  const submission = await this.findById(submissionId);
+  if (!submission) {
+    throw new Error('Submission not found');
+  }
+  
+  // Check if submission is in a valid state to be moved to in_progress
+  const validStates = ['submitted', 'shortlisted'];
+  if (!validStates.includes(submission.status)) {
+    return { canMove: false, reason: `Cannot move from ${submission.status} to in_progress` };
+  }
+  
+  // Check if submission is already assigned to someone
+  if (submission.assignedTo) {
+    return { canMove: false, reason: 'Submission is already being handled by someone else' };
+  }
+  
+  return { canMove: true };
+};
+
+// Instance method to release assignment
+submissionSchema.methods.releaseAssignment = async function() {
+  if (this.status === 'in_progress') {
+    this.assignedTo = null;
+    this.assignedAt = null;
+    this.status = 'submitted';
+    return await this.save();
+  }
+  return this;
 };
 
 // Method to update purge eligibility based on status

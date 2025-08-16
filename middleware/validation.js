@@ -133,8 +133,8 @@ const validateSubmissionUpdate = [
 
 const validateStatusUpdate = [
   body('status')
-    .isIn(['pending_review', 'in_progress', 'needs_revision', 'accepted', 'rejected', 'draft', 'published'])
-    .withMessage('Status must be pending_review, in_progress, needs_revision, accepted, rejected, draft, or published'),
+    .isIn(['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'rejected', 'published', 'archived', 'resubmitted'])
+    .withMessage('Status must be one of: draft, submitted, pending_review, in_progress, shortlisted, needs_changes, approved, rejected, published, archived, or resubmitted'),
   body('notes')
     .optional()
     .isLength({ max: 1000 })
