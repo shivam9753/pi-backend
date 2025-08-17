@@ -260,11 +260,14 @@ submissionSchema.methods.changeStatus = async function(newStatus, userId, userRo
     'shortlisted': 'shortlisted',
     'needs_changes': 'needs_changes',
     'approved': 'approved',
+    'accepted': 'approved', // Map accepted status to approved action
     'rejected': 'rejected',
     'published': 'published',
     'archived': 'archived',
     'draft': 'moved_to_draft',
-    'submitted': 'submitted'
+    'submitted': 'submitted',
+    'needs_revision': 'needs_changes', // Map needs_revision to needs_changes action
+    'pending_review': 'submitted' // Map pending_review to submitted action
   };
   
   const action = actionMap[newStatus];
