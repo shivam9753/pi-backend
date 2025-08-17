@@ -373,7 +373,21 @@ router.get('/:slug', async (req, res) => {
 // GET /api/content/tags/popular - Get trending/popular tags
 router.get('/tags/popular', async (req, res) => {
   try {
-    const { limit = 20 } = req.query;
+    const { limit = 10 } = req.query;
+    
+    // UUID to tag name mapping (expand this as needed)
+    const tagMapping = {
+      'dcaa20cc-3602-49ec-a6bc-5f5c5eb33f5f': 'meta',
+      '5e51b78c-dc53-4f57-bc34-02bf17676ca3': 'morono', 
+      '6360581e-c29e-4b3c-bb12-e3b5d36f8178': 'baluch',
+      'd8437b93-8ff7-4f0e-a854-34ada90ac4d5': 'poetry',
+      '85edca40-f7a2-4eea-a099-c3fc58d3583b': 'prose',
+      '93476858-45c9-4c5c-9c3a-be807002a4f5': 'cinema',
+      'd5d5afe3-e001-4ad4-8626-46870429055': 'literature',
+      '623fae81-2547-4df5-a3b7-546af3366f2e': 'stories',
+      '6afbff37-4160-4e50-9f5e-0b48ba09de06': 'articles',
+      'ce85a0c8-e23f-47a7-be91-9167b43424d1': 'reviews'
+    };
 
     const popularTags = await Content.aggregate([
       { $match: { isPublished: true } },
@@ -386,7 +400,7 @@ router.get('/tags/popular', async (req, res) => {
         }
       },
       { $sort: { count: -1, latestPublished: -1 } },
-      { $limit: parseInt(limit) },
+      { $limit: parseInt(limit) * 2 }, // Get more to account for unmapped UUIDs
       {
         $project: {
           tag: '$_id',
@@ -396,10 +410,18 @@ router.get('/tags/popular', async (req, res) => {
         }
       }
     ]);
+    
+    // Convert UUIDs to readable tag names and filter out unmapped ones
+    const mappedTags = popularTags
+      .map(tagInfo => ({
+        ...tagInfo,
+        tag: tagMapping[tagInfo.tag] || tagInfo.tag
+      }))
+      .filter(tagInfo => tagMapping[tagInfo.tag] || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tagInfo.tag))
+      .slice(0, parseInt(limit));
 
     res.json({ 
-      tags: popularTags.map(t => t.tag),
-      details: popularTags
+      tags: mappedTags.map(t => t.tag)
     });
 
   } catch (error) {

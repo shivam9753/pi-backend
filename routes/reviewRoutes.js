@@ -14,6 +14,7 @@ const router = express.Router();
 // Apply authentication middleware to all review routes
 router.use(authenticateUser);
 
+// DEPRECATED: Use /api/submissions?status=pending_review instead
 // GET /api/reviews/pending - Get submissions pending review and in progress with advanced filtering
 router.get('/pending', requireCurator, validatePagination, async (req, res) => {
   try {
@@ -185,8 +186,14 @@ router.post('/:id/move-to-progress', requireReviewer, validateObjectId('id'), as
     await submission.changeStatus('in_progress', req.user._id, 'reviewer', notes || 'Moved to in progress for review');
     
     res.json({
+      success: true,
       message: 'Submission moved to in progress',
-      submission: await Submission.findById(req.params.id).populate('userId', 'username').populate('history.user', 'username')
+      submission: {
+        _id: submission._id,
+        status: 'in_progress',
+        assignedTo: req.user._id,
+        assignedAt: new Date()
+      }
     });
   } catch (error) {
     res.status(500).json({ message: 'Error moving submission to in progress', error: error.message });

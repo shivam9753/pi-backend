@@ -131,7 +131,7 @@ router.get('/', validatePagination, async (req, res) => {
     
     const submissions = await Submission.find(query)
       .select(selectFields)
-      .populate('userId', 'username email profileImage')
+      .populate('userId', 'name username email profileImage')
       .populate('reviewedBy', 'username')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
@@ -161,11 +161,7 @@ router.get('/', validatePagination, async (req, res) => {
         readingTime: sub.readingTime,
         tags: sub.tags,
         slug: sub.seo?.slug,
-        author: {
-          _id: sub.userId._id,
-          username: sub.userId.username,
-          profileImage: sub.userId.profileImage
-        }
+        authorName: sub.userId.name || sub.userId.username || 'Unknown'
       }));
     } else if (status === 'published_and_draft') {
       // Special case for published_and_draft - include status field
@@ -178,8 +174,7 @@ router.get('/', validatePagination, async (req, res) => {
         readingTime: sub.readingTime,
         tags: sub.tags,
         status: sub.status,
-        submitterName: sub.userId?.username || 'Unknown',
-        reviewerName: sub.reviewedBy?.username || 'Unknown',
+        authorName: sub.userId.name || sub.userId.username || 'Unknown',
         createdAt: sub.createdAt,
         reviewedAt: sub.reviewedAt,
         viewCount: sub.viewCount || 0,
@@ -194,8 +189,8 @@ router.get('/', validatePagination, async (req, res) => {
         readingTime: sub.readingTime,
         submissionType: sub.submissionType,
         tags: sub.tags,
-        submitterName: sub.userId?.username || 'Unknown',
-        reviewerName: sub.reviewedBy?.username || 'Unknown',
+        status: sub.status,
+        authorName: sub.userId.name || sub.userId.username || 'Unknown',
         createdAt: sub.createdAt,
         reviewedAt: sub.reviewedAt
       }));
@@ -224,15 +219,7 @@ router.get('/', validatePagination, async (req, res) => {
   }
 });
 
-// GET /api/submissions/published - Get published submissions (legacy support)
-router.get('/published', validatePagination, async (req, res) => {
-  try {
-    const result = await SubmissionService.getPublishedSubmissions(req.query);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching published submissions', error: error.message });
-  }
-});
+// DEPRECATED: Use /api/submissions?status=published instead
 
 // GET /api/submissions/published/:id - Get single published submission
 router.get('/published/:id', validateObjectId('id'), async (req, res) => {
@@ -267,15 +254,7 @@ router.get('/featured', async (req, res) => {
   }
 });
 
-// GET /api/submissions/search/:query - Search submissions
-router.get('/search/:query', validatePagination, async (req, res) => {
-  try {
-    const result = await SubmissionService.searchSubmissions(req.params.query, req.query);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ message: 'Error searching submissions', error: error.message });
-  }
-});
+// DEPRECATED: Use /api/submissions?search=query instead
 
 // GET /api/submissions/user/me - Get current user's submissions (must come before /:userId)
 router.get('/user/me', authenticateUser, async (req, res) => {
@@ -350,30 +329,18 @@ router.get('/trending', validatePagination, async (req, res) => {
     const totalCount = trendingSubmissions.length;
     const paginatedSubmissions = trendingSubmissions.slice(skipNum, skipNum + limitNum);
 
-    // Transform to include trending score and formatted data
+    // Transform to match published submissions format
     const formattedSubmissions = paginatedSubmissions.map(submission => ({
       _id: submission._id,
       title: submission.title,
-      description: submission.description,
       submissionType: submission.submissionType,
-      author: {
-        _id: submission.userId._id,
-        name: submission.userId.name,
-        username: submission.userId.username,
-        profileImage: submission.userId.profileImage
-      },
-      viewCount: submission.viewCount,
-      recentViews: submission.recentViews,
-      windowStartTime: submission.windowStartTime,
-      trendingScore: submission.getTrendingScore(),
-      readingTime: submission.readingTime,
-      isFeatured: submission.isFeatured,
       excerpt: submission.excerpt,
       imageUrl: submission.imageUrl,
-      createdAt: submission.createdAt,
-      publishedAt: submission.reviewedAt,
-      contents: submission.contentIds?.slice(0, 1), // First content only for preview
-      tags: submission.contentIds?.[0]?.tags || []
+      publishedAt: submission.reviewedAt || submission.createdAt,
+      viewCount: submission.viewCount,
+      readingTime: submission.readingTime,
+      slug: submission.seo?.slug,
+      authorName: submission.userId?.name || submission.userId?.username || 'Unknown'
     }));
 
     res.json({
@@ -792,7 +759,12 @@ router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId(
     res.json({
       success: true,
       message: 'Submission unpublished successfully',
-      submission: await Submission.findById(req.params.id).populate('userId', 'username').populate('history.user', 'username')
+      submission: {
+        _id: submission._id,
+        status: 'accepted',
+        unpublishedBy: req.user._id,
+        unpublishedAt: new Date()
+      }
     });
   } catch (error) {
     res.status(500).json({ message: 'Error unpublishing submission', error: error.message });
@@ -1367,22 +1339,14 @@ router.get('/most-viewed', validatePagination, async (req, res) => {
     const formattedSubmissions = mostViewedSubmissions.map(submission => ({
       _id: submission._id,
       title: submission.title,
-      description: submission.description,
       submissionType: submission.submissionType,
-      author: {
-        _id: submission.userId._id,
-        name: submission.userId.name,
-        username: submission.userId.username,
-        profileImage: submission.userId.profileImage
-      },
-      viewCount: submission.viewCount,
-      recentViews: submission.recentViews || 0,
-      readingTime: submission.readingTime,
-      isFeatured: submission.isFeatured,
       excerpt: submission.excerpt,
       imageUrl: submission.imageUrl,
-      createdAt: submission.createdAt,
-      publishedAt: submission.reviewedAt
+      publishedAt: submission.reviewedAt || submission.createdAt,
+      viewCount: submission.viewCount,
+      readingTime: submission.readingTime,
+      slug: submission.seo?.slug,
+      authorName: submission.userId?.name || submission.userId?.username || 'Unknown'
     }));
 
     res.json({
