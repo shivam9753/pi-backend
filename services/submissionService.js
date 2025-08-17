@@ -5,7 +5,7 @@ const User = require('../models/User');
 
 class SubmissionService {
   static async createSubmission(submissionData) {
-    const { userId, authorId, title, description, submissionType, contents, profileData } = submissionData;
+    const { userId, authorId, title, description, submissionType, contents, profileData, status } = submissionData;
     
     // Handle both userId and authorId (frontend compatibility)
     const actualUserId = userId || authorId;
@@ -30,6 +30,7 @@ class SubmissionService {
       description,
       contentIds: [], // Empty initially
       submissionType,
+      status: status || 'draft', // Use provided status or default to 'draft'
       readingTime: 1, // Default, will be updated
       excerpt: '' // Default, will be updated
     });

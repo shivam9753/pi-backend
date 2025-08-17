@@ -9,8 +9,7 @@ const submissionSchema = new mongoose.Schema({
   title: {
     type: String,
     required: true,
-    trim: true,
-    minlength: 3
+    trim: true
   },
   description: {
     type: String,

@@ -75,13 +75,11 @@ const validateUserUpdate = [
 const validateSubmissionCreation = [
   body('title')
     .trim()
-    .isLength({ min: 3, max: 200 })
-    .withMessage('Title must be 3-200 characters long'),
+    .notEmpty()
+    .withMessage('Title is required'),
   body('description')
     .optional()
-    .trim()
-    .isLength({ max: 1000 })
-    .withMessage('Description must be maximum 1000 characters long'),
+    .trim(),
   body('submissionType')
     .isIn(['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'])
     .withMessage('Submission type must be poem, prose, article, book_review, cinema_essay, or opinion'),
@@ -90,12 +88,12 @@ const validateSubmissionCreation = [
     .withMessage('At least one content item is required'),
   body('contents.*.title')
     .trim()
-    .isLength({ min: 3, max: 200 })
-    .withMessage('Content title must be 3-200 characters long'),
+    .notEmpty()
+    .withMessage('Content title is required'),
   body('contents.*.body')
     .trim()
-    .isLength({ min: 10 })
-    .withMessage('Content body must be at least 10 characters long'),
+    .notEmpty()
+    .withMessage('Content body is required'),
   body('contents.*.type')
     .isIn(['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'])
     .withMessage('Content type must be poem, prose, article, book_review, cinema_essay, or opinion'),
@@ -106,13 +104,11 @@ const validateSubmissionUpdate = [
   body('title')
     .optional()
     .trim()
-    .isLength({ min: 3, max: 200 })
-    .withMessage('Title must be 3-200 characters long'),
+    .notEmpty()
+    .withMessage('Title cannot be empty when provided'),
   body('description')
-    .optional({ checkFalsy: true })
-    .trim()
-    .isLength({ min: 10, max: 1000 })
-    .withMessage('Description must be 10-1000 characters long when provided'),
+    .optional()
+    .trim(),
   body('imageUrl')
     .optional()
     .custom((value) => {
@@ -146,12 +142,12 @@ const validateStatusUpdate = [
 const validateContentCreation = [
   body('title')
     .trim()
-    .isLength({ min: 3, max: 200 })
-    .withMessage('Title must be 3-200 characters long'),
+    .notEmpty()
+    .withMessage('Title is required'),
   body('body')
     .trim()
-    .isLength({ min: 10 })
-    .withMessage('Body must be at least 10 characters long'),
+    .notEmpty()
+    .withMessage('Body is required'),
   body('type')
     .isIn(['poem', 'story', 'article', 'quote', 'cinema_essay'])
     .withMessage('Type must be poem, story, article, quote, or cinema_essay'),

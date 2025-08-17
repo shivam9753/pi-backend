@@ -403,7 +403,8 @@ router.post('/', authenticateUser, validateSubmissionCreation, async (req, res) 
     const submissionData = {
       ...req.body,
       userId: req.user._id, // Use authenticated user's database ID
-      authorId: req.user._id // For backward compatibility
+      authorId: req.user._id, // For backward compatibility
+      status: 'pending_review' // Always set status to pending_review for new submissions
     };
     
     const submission = await SubmissionService.createSubmission(submissionData);
