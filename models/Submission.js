@@ -27,7 +27,7 @@ const submissionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'rejected', 'published', 'archived', 'resubmitted'],
+    enum: ['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'accepted', 'rejected', 'published', 'archived', 'resubmitted'],
     default: 'draft'
   },
   imageUrl: {
@@ -73,7 +73,7 @@ const submissionSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'rejected', 'published', 'archived', 'resubmitted'],
+      enum: ['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'accepted', 'rejected', 'published', 'archived', 'resubmitted'],
       required: true
     },
     timestamp: {

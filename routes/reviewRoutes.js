@@ -246,7 +246,7 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
     } else {
       // For reject/revision: Update status first, then create review
       const submission = await Submission.findById(req.params.id);
-      if (submission && ['pending_review', 'in_progress', 'resubmitted'].includes(submission.status)) {
+      if (submission && ['pending_review', 'in_progress', 'resubmitted', 'shortlisted'].includes(submission.status)) {
         await submission.changeStatus(statusMap[action], req.user._id, 'reviewer', reviewNotes.trim());
       }
       result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
@@ -317,7 +317,7 @@ router.post('/:id/reject', requireReviewer, validateObjectId('id'), async (req, 
 
     // First update the submission status with history tracking
     const submission = await Submission.findById(req.params.id);
-    if (submission && ['pending_review', 'in_progress'].includes(submission.status)) {
+    if (submission && ['pending_review', 'in_progress', 'shortlisted'].includes(submission.status)) {
       await submission.changeStatus('rejected', req.user._id, 'reviewer', reviewNotes.trim());
     }
     
@@ -355,7 +355,7 @@ router.post('/:id/revision', requireReviewer, validateObjectId('id'), async (req
 
     // First update the submission status with history tracking
     const submission = await Submission.findById(req.params.id);
-    if (submission && ['pending_review', 'in_progress'].includes(submission.status)) {
+    if (submission && ['pending_review', 'in_progress', 'shortlisted'].includes(submission.status)) {
       await submission.changeStatus('needs_revision', req.user._id, 'reviewer', reviewNotes.trim());
     }
     
