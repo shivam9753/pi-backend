@@ -11,6 +11,7 @@ const {
   validateObjectId,
   validatePagination 
 } = require('../middleware/validation');
+const { SUBMISSION_STATUS } = require('../constants/status.constants');
 
 // Import ImageService for S3/local storage handling
 const { ImageService } = require('../config/imageService');
@@ -100,6 +101,10 @@ router.get('/', validatePagination, async (req, res) => {
         query.status = { $in: ['published', 'draft'] };
       } else if (status === 'published_and_accepted') {
         query.status = { $in: ['published', 'accepted'] };
+      } else if (status.includes(',')) {
+        // Handle comma-separated multiple statuses
+        const statusArray = status.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        query.status = { $in: statusArray };
       } else {
         query.status = status;
       }
@@ -404,7 +409,7 @@ router.post('/', authenticateUser, validateSubmissionCreation, async (req, res) 
       ...req.body,
       userId: req.user._id, // Use authenticated user's database ID
       authorId: req.user._id, // For backward compatibility
-      status: 'pending_review' // Always set status to pending_review for new submissions
+      status: SUBMISSION_STATUS.PENDING_REVIEW // Always set status to pending_review for new submissions
     };
     
     const submission = await SubmissionService.createSubmission(submissionData);
@@ -751,11 +756,11 @@ router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId(
       return res.status(404).json({ message: 'Submission not found' });
     }
     
-    if (submission.status !== 'published') {
+    if (submission.status !== SUBMISSION_STATUS.PUBLISHED) {
       return res.status(400).json({ message: 'Only published submissions can be unpublished' });
     }
     
-    await submission.changeStatus('accepted', req.user._id, 'admin', notes || 'Unpublished by admin');
+    await submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user._id, 'admin', notes || 'Unpublished by admin');
     
     res.json({
       success: true,

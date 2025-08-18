@@ -38,6 +38,10 @@ if (!process.env.NODE_ENV) {
   console.log(`Set NODE_ENV to: ${NODE_ENV}`);
 }
 
+// Initialize development validation
+const DevValidation = require('./utils/devValidation');
+DevValidation.initializeChecks();
+
 // Import models first to ensure they are registered
 require('./models/User');
 require('./models/Submission');

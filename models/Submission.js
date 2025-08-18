@@ -1,4 +1,12 @@
 const mongoose = require('mongoose');
+const { 
+  SUBMISSION_STATUS, 
+  REVIEW_ACTIONS, 
+  SUBMISSION_TYPES, 
+  STATUS_ARRAYS,
+  STATUS_ACTION_MAP,
+  STATUS_UTILS 
+} = require('../constants/status.constants');
 
 const submissionSchema = new mongoose.Schema({
   userId: {
@@ -22,13 +30,13 @@ const submissionSchema = new mongoose.Schema({
   }],
   submissionType: {
     type: String,
-    enum: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion', 'books', 'napoWrimo', 'prose', 'interview'],
+    enum: STATUS_ARRAYS.ALL_SUBMISSION_TYPES,
     required: true
   },
   status: {
     type: String,
-    enum: ['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'accepted', 'rejected', 'published', 'archived', 'resubmitted'],
-    default: 'draft'
+    enum: STATUS_ARRAYS.ALL_SUBMISSION_STATUSES,
+    default: SUBMISSION_STATUS.DRAFT
   },
   imageUrl: {
     type: String,
@@ -68,12 +76,12 @@ const submissionSchema = new mongoose.Schema({
   history: [{
     action: {
       type: String,
-      enum: ['submitted', 'moved_to_in_progress', 'shortlisted', 'needs_changes', 'approved', 'rejected', 'published', 'archived', 'moved_to_draft'],
+      enum: STATUS_ARRAYS.ALL_REVIEW_ACTIONS,
       required: true
     },
     status: {
       type: String,
-      enum: ['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'accepted', 'rejected', 'published', 'archived', 'resubmitted'],
+      enum: STATUS_ARRAYS.ALL_SUBMISSION_STATUSES,
       required: true
     },
     timestamp: {
@@ -87,7 +95,7 @@ const submissionSchema = new mongoose.Schema({
     },
     userRole: {
       type: String,
-      enum: ['user', 'curator', 'reviewer', 'admin'],
+      enum: STATUS_ARRAYS.ALL_USER_ROLES,
       required: true
     },
     notes: {
@@ -255,22 +263,17 @@ submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, u
 
 // Method to change status with history tracking
 submissionSchema.methods.changeStatus = async function(newStatus, userId, userRole, notes = '') {
-  const actionMap = {
-    'in_progress': 'moved_to_in_progress',
-    'shortlisted': 'shortlisted',
-    'needs_changes': 'needs_changes',
-    'approved': 'approved',
-    'accepted': 'approved', // Map accepted status to approved action
-    'rejected': 'rejected',
-    'published': 'published',
-    'archived': 'archived',
-    'draft': 'moved_to_draft',
-    'submitted': 'submitted',
-    'needs_revision': 'needs_changes', // Map needs_revision to needs_changes action
-    'pending_review': 'submitted' // Map pending_review to submitted action
-  };
+  // Validate status
+  if (!STATUS_UTILS.isValidSubmissionStatus(newStatus)) {
+    throw new Error(`Invalid submission status: ${newStatus}`);
+  }
   
-  const action = actionMap[newStatus];
+  // Validate status transition
+  if (!STATUS_UTILS.isValidStatusTransition(this.status, newStatus)) {
+    throw new Error(`Invalid status transition from ${this.status} to ${newStatus}`);
+  }
+  
+  const action = STATUS_UTILS.getActionForStatus(newStatus);
   
   if (!action) {
     throw new Error(`No action mapping defined for status: ${newStatus}`);
@@ -282,7 +285,7 @@ submissionSchema.methods.changeStatus = async function(newStatus, userId, userRo
   // Add history entry
   this.addHistoryEntry(action, newStatus, userId, userRole, notes);
   
-  if (newStatus === 'needs_changes') {
+  if (newStatus === SUBMISSION_STATUS.NEEDS_CHANGES || newStatus === SUBMISSION_STATUS.NEEDS_REVISION) {
     this.revisionNotes = notes;
   }
   

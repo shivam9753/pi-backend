@@ -8,6 +8,13 @@ const {
   validateObjectId,
   validatePagination 
 } = require('../middleware/validation');
+const { 
+  SUBMISSION_STATUS, 
+  REVIEW_ACTIONS, 
+  STATUS_ARRAYS,
+  ACTION_STATUS_MAP,
+  STATUS_UTILS 
+} = require('../constants/status.constants');
 
 const router = express.Router();
 
@@ -32,8 +39,8 @@ router.get('/pending', requireCurator, validatePagination, async (req, res) => {
       wordLength // 'quick' (<200), 'medium' (200-500), 'long' (>500)
     } = req.query;
     
-    // Default to pending_review, in_progress, and resubmitted, or filter by specific status
-    const query = status ? { status } : { status: { $in: ['pending_review', 'in_progress', 'resubmitted'] } };
+    // Default to reviewable statuses, or filter by specific status
+    const query = status ? { status } : { status: { $in: STATUS_ARRAYS.REVIEWABLE_STATUSES } };
     
     // Content type filter
     if (type) query.submissionType = type;
@@ -179,18 +186,18 @@ router.post('/:id/move-to-progress', requireReviewer, validateObjectId('id'), as
       return res.status(404).json({ message: 'Submission not found' });
     }
     
-    if (!['pending_review'].includes(submission.status)) {
+    if (submission.status !== SUBMISSION_STATUS.PENDING_REVIEW) {
       return res.status(400).json({ message: 'Only pending submissions can be moved to in progress' });
     }
     
-    await submission.changeStatus('in_progress', req.user._id, 'reviewer', notes || 'Moved to in progress for review');
+    await submission.changeStatus(SUBMISSION_STATUS.IN_PROGRESS, req.user._id, 'reviewer', notes || 'Moved to in progress for review');
     
     res.json({
       success: true,
       message: 'Submission moved to in progress',
       submission: {
         _id: submission._id,
-        status: 'in_progress',
+        status: SUBMISSION_STATUS.IN_PROGRESS,
         assignedTo: req.user._id,
         assignedAt: new Date()
       }
@@ -219,12 +226,8 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
       });
     }
     
-    // Map action to status
-    const statusMap = {
-      'approve': 'accepted',
-      'reject': 'rejected', 
-      'revision': 'needs_revision'
-    };
+    // Map action to status using constants
+    const statusMap = ACTION_STATUS_MAP;
     
     const reviewData = {
       reviewerId: req.user._id,
@@ -241,12 +244,12 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
       // Create the review record first
       result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
       // Then update submission status with history tracking
-      await result.submission.changeStatus('accepted', req.user._id, 'reviewer', reviewNotes || 'Submission approved');
+      await result.submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user._id, 'reviewer', reviewNotes || 'Submission approved');
       message = 'Submission approved successfully';
     } else {
       // For reject/revision: Update status first, then create review
       const submission = await Submission.findById(req.params.id);
-      if (submission && ['pending_review', 'in_progress', 'resubmitted', 'shortlisted'].includes(submission.status)) {
+      if (submission && STATUS_UTILS.isReviewableStatus(submission.status)) {
         await submission.changeStatus(statusMap[action], req.user._id, 'reviewer', reviewNotes.trim());
       }
       result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
@@ -266,113 +269,8 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
   }
 });
 
-// LEGACY: POST /api/reviews/:id/approve - Approve submission - DEPRECATED
-router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req, res) => {
-  try {
-    const { reviewNotes, rating } = req.body;
-    
-    const reviewData = {
-      reviewerId: req.user._id,
-      reviewerName: req.user.username,
-      status: 'accepted',
-      reviewNotes: reviewNotes || '',
-      rating: rating
-    };
-
-    // Create the review record first
-    const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
-    
-    // Then update submission status with history tracking
-    await result.submission.changeStatus('accepted', req.user._id, 'reviewer', reviewNotes || 'Submission approved');
-    
-    res.json({
-      message: 'Submission approved successfully',
-      submission: result.submission,
-      review: result.review
-    });
-  } catch (error) {
-    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
-      return res.status(400).json({ message: error.message });
-    }
-    res.status(500).json({ message: 'Error approving submission', error: error.message });
-  }
-});
-
-// LEGACY: POST /api/reviews/:id/reject - Reject submission - DEPRECATED
-router.post('/:id/reject', requireReviewer, validateObjectId('id'), async (req, res) => {
-  try {
-    const { reviewNotes, rating } = req.body;
-    
-    if (!reviewNotes || reviewNotes.trim().length === 0) {
-      return res.status(400).json({ message: 'Review notes are required when rejecting a submission' });
-    }
-    
-    const reviewData = {
-      reviewerId: req.user._id,
-      reviewerName: req.user.username,
-      status: 'rejected',
-      reviewNotes: reviewNotes.trim(),
-      rating: rating
-    };
-
-    // First update the submission status with history tracking
-    const submission = await Submission.findById(req.params.id);
-    if (submission && ['pending_review', 'in_progress', 'shortlisted'].includes(submission.status)) {
-      await submission.changeStatus('rejected', req.user._id, 'reviewer', reviewNotes.trim());
-    }
-    
-    const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
-    
-    res.json({
-      message: 'Submission rejected',
-      submission: result.submission,
-      review: result.review
-    });
-  } catch (error) {
-    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
-      return res.status(400).json({ message: error.message });
-    }
-    res.status(500).json({ message: 'Error rejecting submission', error: error.message });
-  }
-});
-
-// LEGACY: POST /api/reviews/:id/revision - Request revision - DEPRECATED
-router.post('/:id/revision', requireReviewer, validateObjectId('id'), async (req, res) => {
-  try {
-    const { reviewNotes, rating } = req.body;
-    
-    if (!reviewNotes || reviewNotes.trim().length === 0) {
-      return res.status(400).json({ message: 'Review notes are required when requesting revision' });
-    }
-    
-    const reviewData = {
-      reviewerId: req.user._id,
-      reviewerName: req.user.username,
-      status: 'needs_revision',
-      reviewNotes: reviewNotes.trim(),
-      rating: rating
-    };
-
-    // First update the submission status with history tracking
-    const submission = await Submission.findById(req.params.id);
-    if (submission && ['pending_review', 'in_progress', 'shortlisted'].includes(submission.status)) {
-      await submission.changeStatus('needs_revision', req.user._id, 'reviewer', reviewNotes.trim());
-    }
-    
-    const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
-    
-    res.json({
-      message: 'Revision requested',
-      submission: result.submission,
-      review: result.review
-    });
-  } catch (error) {
-    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
-      return res.status(400).json({ message: error.message });
-    }
-    res.status(500).json({ message: 'Error requesting revision', error: error.message });
-  }
-});
+// LEGACY ENDPOINTS REMOVED - Use POST /:id/action instead
+// These endpoints have been consolidated into the unified action endpoint for better maintainability
 
 // GET /api/reviews/my-reviews - Get reviews by current user
 router.get('/my-reviews', requireReviewer, validatePagination, async (req, res) => {

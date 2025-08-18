@@ -1,6 +1,7 @@
 const bcrypt = require('bcrypt');
 const User = require('../models/User');
 const { generateToken } = require('../middleware/auth');
+const { SUBMISSION_STATUS } = require('../constants/status.constants');
 
 class UserService {
   static async registerUser(userData) {
@@ -74,9 +75,9 @@ class UserService {
     
     const [totalSubmissions, acceptedSubmissions, pendingSubmissions, rejectedSubmissions] = await Promise.all([
       Submission.countDocuments({ userId }),
-      Submission.countDocuments({ userId, status: 'accepted' }),
-      Submission.countDocuments({ userId, status: 'pending_review' }),
-      Submission.countDocuments({ userId, status: 'rejected' })
+      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.ACCEPTED }),
+      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.PENDING_REVIEW }),
+      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.REJECTED })
     ]);
 
     const userProfile = user.toPublicJSON();

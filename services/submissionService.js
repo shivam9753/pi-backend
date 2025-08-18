@@ -2,6 +2,11 @@ const Submission = require('../models/Submission');
 const Content = require('../models/Content');
 const Review = require('../models/Review');
 const User = require('../models/User');
+const { 
+  SUBMISSION_STATUS, 
+  STATUS_ARRAYS,
+  STATUS_UTILS 
+} = require('../constants/status.constants');
 
 class SubmissionService {
   static async createSubmission(submissionData) {
@@ -30,7 +35,7 @@ class SubmissionService {
       description,
       contentIds: [], // Empty initially
       submissionType,
-      status: status || 'draft', // Use provided status or default to 'draft'
+      status: status || SUBMISSION_STATUS.DRAFT, // Use provided status or default to 'draft'
       readingTime: 1, // Default, will be updated
       excerpt: '' // Default, will be updated
     });
@@ -62,7 +67,7 @@ class SubmissionService {
   static async getAcceptedSubmissions(filters = {}) {
     const { type, limit = 20, skip = 0, sortBy = 'reviewedAt', order = 'desc' } = filters;
     
-    const query = { status: 'accepted' };
+    const query = { status: SUBMISSION_STATUS.ACCEPTED };
     if (type) query.submissionType = type;
 
     // Use .select() to only fetch required fields - exclude large fields like description
@@ -106,7 +111,7 @@ class SubmissionService {
   static async getPublishedSubmissions(filters = {}) {
     const { type, limit = 20, skip = 0, sortBy = 'reviewedAt', order = 'desc' } = filters;
     
-    const query = { status: 'published' };
+    const query = { status: SUBMISSION_STATUS.PUBLISHED };
     if (type) query.submissionType = type;
 
     // Use .select() to exclude large fields like description and contentIds for listing
@@ -207,7 +212,7 @@ class SubmissionService {
 
     submission.status = status;
 
-    if (status === 'published' || status === 'accepted') {
+    if (status === SUBMISSION_STATUS.PUBLISHED || status === SUBMISSION_STATUS.ACCEPTED) {
       submission.reviewedAt = new Date();
       submission.reviewedBy = reviewerId;
     }
@@ -222,10 +227,10 @@ class SubmissionService {
     }
 
     // Allow reviewing submissions in various states for different actions
-    const allowedStatuses = ['pending_review', 'in_progress', 'resubmitted', 'shortlisted'];
-    if (reviewData.status === 'needs_revision') {
+    const allowedStatuses = [...STATUS_ARRAYS.REVIEWABLE_STATUSES];
+    if (reviewData.status === SUBMISSION_STATUS.NEEDS_REVISION) {
       // For revision requests, allow needs_revision status as well (in case of re-review)
-      allowedStatuses.push('needs_revision');
+      allowedStatuses.push(SUBMISSION_STATUS.NEEDS_REVISION);
     }
     
     if (!allowedStatuses.includes(submission.status)) {
