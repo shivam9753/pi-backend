@@ -190,7 +190,7 @@ router.post('/:id/move-to-progress', requireReviewer, validateObjectId('id'), as
       return res.status(400).json({ message: 'Only pending submissions can be moved to in progress' });
     }
     
-    await submission.changeStatus(SUBMISSION_STATUS.IN_PROGRESS, req.user._id, 'reviewer', notes || 'Moved to in progress for review');
+    await submission.changeStatus(SUBMISSION_STATUS.IN_PROGRESS, req.user, notes || 'Moved to in progress for review');
     
     res.json({
       success: true,
@@ -244,15 +244,13 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
       // Create the review record first
       result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
       // Then update submission status with history tracking
-      await result.submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user._id, 'reviewer', reviewNotes || 'Submission approved');
+      await result.submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user, reviewNotes || 'Submission approved');
       message = 'Submission approved successfully';
     } else {
-      // For reject/revision: Update status first, then create review
-      const submission = await Submission.findById(req.params.id);
-      if (submission && STATUS_UTILS.isReviewableStatus(submission.status)) {
-        await submission.changeStatus(statusMap[action], req.user._id, 'reviewer', reviewNotes.trim());
-      }
+      // For reject/revision: Create review first, then update status
       result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
+      // Then update submission status with history tracking
+      await result.submission.changeStatus(statusMap[action], req.user, reviewNotes.trim());
       message = action === 'reject' ? 'Submission rejected' : 'Revision requested';
     }
     

@@ -450,7 +450,7 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
     Object.assign(submission, req.body);
     
     // Add history entry and change status to resubmitted
-    await submission.changeStatus('resubmitted', req.user._id, 'user', 'Resubmitted after revision');
+    await submission.changeStatus('resubmitted', req.user, 'Resubmitted after revision');
     
     // Update contents if provided
     if (req.body.contents && Array.isArray(req.body.contents)) {
@@ -760,7 +760,7 @@ router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId(
       return res.status(400).json({ message: 'Only published submissions can be unpublished' });
     }
     
-    await submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user._id, 'admin', notes || 'Unpublished by admin');
+    await submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user, notes || 'Unpublished by admin');
     
     res.json({
       success: true,
@@ -1396,29 +1396,6 @@ router.get('/:id/stats', validateObjectId('id'), async (req, res) => {
   } catch (error) {
     console.error('Error fetching submission stats:', error);
     res.status(500).json({ message: 'Error fetching submission stats', error: error.message });
-  }
-});
-
-// GET /api/submissions/analytics/trending-stats - Get trending analytics
-router.get('/analytics/trending-stats', async (req, res) => {
-  try {
-    const { windowDays = 7 } = req.query;
-    const windowDaysNum = parseInt(windowDays) || 7;
-
-    const trendingStats = await Submission.getTrendingStats(windowDaysNum);
-
-    res.json({
-      success: true,
-      stats: trendingStats,
-      meta: {
-        windowDays: windowDaysNum,
-        generatedAt: new Date().toISOString()
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching trending stats:', error);
-    res.status(500).json({ message: 'Error fetching trending stats', error: error.message });
   }
 });
 

@@ -232,6 +232,17 @@ submissionSchema.methods.toggleFeatured = async function() {
 
 // Method to add history entry
 submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, userRole, notes = '') {
+  // Validate required parameters
+  if (!userRole) {
+    throw new Error('userRole is required for history entry');
+  }
+  
+  // Validate that the userRole is valid
+  const { STATUS_ARRAYS } = require('../constants/status.constants');
+  if (!STATUS_ARRAYS.ALL_USER_ROLES.includes(userRole)) {
+    throw new Error(`Invalid userRole: ${userRole}. Must be one of: ${STATUS_ARRAYS.ALL_USER_ROLES.join(', ')}`);
+  }
+  
   this.history.push({
     action,
     status: newStatus,
@@ -262,7 +273,26 @@ submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, u
 };
 
 // Method to change status with history tracking
-submissionSchema.methods.changeStatus = async function(newStatus, userId, userRole, notes = '') {
+submissionSchema.methods.changeStatus = async function(newStatus, user, notes = '') {
+  // user can be either a user object with {_id, role} or just a userId for backward compatibility
+  let userId, userRole;
+  
+  if (typeof user === 'object' && user._id && user.role) {
+    userId = user._id;
+    userRole = user.role;
+  } else if (typeof user === 'string' || (typeof user === 'object' && user.toString)) {
+    // Backward compatibility: if just userId is passed, we need to look up the role
+    userId = user.toString();
+    const User = require('./User');
+    const userData = await User.findById(userId).select('role');
+    if (!userData) {
+      throw new Error('User not found');
+    }
+    userRole = userData.role;
+  } else {
+    throw new Error('Invalid user parameter. Expected user object with {_id, role} or userId string');
+  }
+  
   // Validate status
   if (!STATUS_UTILS.isValidSubmissionStatus(newStatus)) {
     throw new Error(`Invalid submission status: ${newStatus}`);
@@ -528,31 +558,6 @@ submissionSchema.statics.findMostViewed = function(limit = 10, timeframe = 'all'
     .limit(limit);
 };
 
-submissionSchema.statics.getTrendingStats = function(windowDays = 7) {
-  const windowMs = windowDays * 24 * 60 * 60 * 1000;
-  const cutoffTime = new Date(Date.now() - windowMs);
-  
-  return this.aggregate([
-    {
-      $match: {
-        status: 'published',
-        windowStartTime: { $gte: cutoffTime }
-      }
-    },
-    {
-      $group: {
-        _id: '$submissionType',
-        totalTrending: { $sum: 1 },
-        totalRecentViews: { $sum: '$recentViews' },
-        avgRecentViews: { $avg: '$recentViews' },
-        maxRecentViews: { $max: '$recentViews' }
-      }
-    },
-    {
-      $sort: { totalRecentViews: -1 }
-    }
-  ]);
-};
 
 // Instance methods for drafts
 submissionSchema.methods.updateDraft = function(updateData) {

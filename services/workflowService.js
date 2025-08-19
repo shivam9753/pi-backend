@@ -97,7 +97,7 @@ class WorkflowService {
       }
 
       // Execute the transition
-      await submission.changeStatus(targetStatus, userId, userRole, notes);
+      await submission.changeStatus(targetStatus, { _id: userId, role: userRole }, notes);
 
       // Return updated submission with populated fields
       return await Submission.findById(submissionId)
