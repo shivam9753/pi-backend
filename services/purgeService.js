@@ -8,10 +8,25 @@ class PurgeService {
    * Get purge statistics for admin dashboard
    */
   static async getPurgeStats() {
-    const stats = await Submission.getPurgeStats();
+    const purgeableStatuses = ['rejected', 'needs_revision', 'draft'];
+    const stats = await Submission.aggregate([
+      {
+        $match: {
+          status: { $in: purgeableStatuses }
+        }
+      },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          oldestSubmission: { $min: '$updatedAt' },
+          newestSubmission: { $max: '$updatedAt' }
+        }
+      }
+    ]);
+    
     const totalPurgeable = await Submission.countDocuments({
-      eligibleForPurge: true,
-      markedForDeletion: { $ne: true }
+      status: { $in: purgeableStatuses }
     });
     
     return {
@@ -33,21 +48,17 @@ class PurgeService {
     } = options;
     
     const cutoffDate = new Date(Date.now() - (olderThanDays * 24 * 60 * 60 * 1000));
+    const purgeableStatuses = ['rejected', 'needs_revision', 'draft'];
     
     let query = {
-      eligibleForPurge: true,
-      purgeEligibleSince: { $lte: cutoffDate },
-      markedForDeletion: { $ne: true }
+      status: status ? status : { $in: purgeableStatuses },
+      updatedAt: { $lte: cutoffDate }
     };
-    
-    if (status) {
-      query.status = status;
-    }
     
     const submissions = await Submission.find(query)
       .populate('userId', 'username email')
-      .select('title status purgeEligibleSince createdAt userId')
-      .sort({ purgeEligibleSince: 1 })
+      .select('title status createdAt updatedAt userId')
+      .sort({ updatedAt: 1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip))
       .lean();
@@ -61,8 +72,8 @@ class PurgeService {
         status: sub.status,
         author: sub.userId?.username || 'Unknown',
         submittedAt: sub.createdAt,
-        eligibleSince: sub.purgeEligibleSince,
-        daysSinceEligible: Math.floor((Date.now() - sub.purgeEligibleSince) / (24 * 60 * 60 * 1000))
+        eligibleSince: sub.updatedAt,
+        daysSinceEligible: Math.floor((Date.now() - sub.updatedAt) / (24 * 60 * 60 * 1000))
       })),
       total,
       pagination: {
@@ -77,10 +88,10 @@ class PurgeService {
    * Preview what will be deleted before actual purge
    */
   static async previewPurge(submissionIds) {
+    const purgeableStatuses = ['rejected', 'needs_revision', 'draft'];
     const submissions = await Submission.find({
       _id: { $in: submissionIds },
-      eligibleForPurge: true,
-      markedForDeletion: { $ne: true }
+      status: { $in: purgeableStatuses }
     }).populate('userId', 'username');
 
     const preview = {
@@ -135,10 +146,10 @@ class PurgeService {
 
     try {
       // Verify all submissions are eligible
+      const purgeableStatuses = ['rejected', 'needs_revision', 'draft'];
       const submissions = await Submission.find({
         _id: { $in: submissionIds },
-        eligibleForPurge: true,
-        markedForDeletion: { $ne: true }
+        status: { $in: purgeableStatuses }
       });
 
       if (submissions.length !== submissionIds.length) {
@@ -199,30 +210,6 @@ class PurgeService {
     }
   }
 
-  /**
-   * Bulk mark submissions as eligible for purge (for migration)
-   */
-  static async markExistingSubmissionsForPurge() {
-    const purgeableStatuses = ['rejected', 'spam'];
-    
-    const result = await Submission.updateMany(
-      { 
-        status: { $in: purgeableStatuses },
-        eligibleForPurge: { $ne: true }
-      },
-      {
-        $set: {
-          eligibleForPurge: true,
-          purgeEligibleSince: new Date()
-        }
-      }
-    );
-
-    return {
-      modified: result.modifiedCount,
-      message: `Marked ${result.modifiedCount} existing submissions as eligible for purge`
-    };
-  }
 
   /**
    * Get purge recommendations based on age and status
@@ -231,12 +218,12 @@ class PurgeService {
     const now = new Date();
     const fourMonthsAgo = new Date(now.getTime() - (120 * 24 * 60 * 60 * 1000));
     const oneMonthAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+    const purgeableStatuses = ['rejected', 'needs_revision', 'draft'];
 
     const recommendations = await Submission.aggregate([
       {
         $match: {
-          eligibleForPurge: true,
-          markedForDeletion: { $ne: true }
+          status: { $in: purgeableStatuses }
         }
       },
       {
@@ -245,21 +232,32 @@ class PurgeService {
             $cond: {
               if: { 
                 $and: [
-                  { $eq: ['$status', 'spam'] },
-                  { $lte: ['$purgeEligibleSince', oneMonthAgo] }
+                  { $eq: ['$status', 'rejected'] },
+                  { $lte: ['$updatedAt', oneMonthAgo] }
                 ]
               },
-              then: 'High Priority - Spam older than 1 month',
+              then: 'High Priority - Rejected older than 1 month',
               else: {
                 $cond: {
                   if: { 
                     $and: [
-                      { $eq: ['$status', 'rejected'] },
-                      { $lte: ['$purgeEligibleSince', fourMonthsAgo] }
+                      { $eq: ['$status', 'needs_revision'] },
+                      { $lte: ['$updatedAt', fourMonthsAgo] }
                     ]
                   },
-                  then: 'Medium Priority - Rejected older than 4 months',
-                  else: 'Low Priority - Recent or under review'
+                  then: 'Medium Priority - Needs revision older than 4 months',
+                  else: {
+                    $cond: {
+                      if: { 
+                        $and: [
+                          { $eq: ['$status', 'draft'] },
+                          { $lte: ['$updatedAt', fourMonthsAgo] }
+                        ]
+                      },
+                      then: 'Low Priority - Draft older than 4 months',
+                      else: 'Recent - Review needed'
+                    }
+                  }
                 }
               }
             }
@@ -270,7 +268,7 @@ class PurgeService {
         $group: {
           _id: '$recommendation',
           count: { $sum: 1 },
-          oldestSubmission: { $min: '$purgeEligibleSince' }
+          oldestSubmission: { $min: '$updatedAt' }
         }
       },
       {

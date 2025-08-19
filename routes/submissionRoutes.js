@@ -999,7 +999,7 @@ router.post('/drafts', authenticateUser, async (req, res) => {
     
     if (draftId) {
       // Update existing draft
-      draft = await Submission.findOne({ _id: draftId, userId: req.user._id, isDraft: true });
+      draft = await Submission.findOne({ _id: draftId, userId: req.user._id, status: 'draft' });
       if (!draft) {
         return res.status(404).json({ message: 'Draft not found' });
       }
@@ -1086,7 +1086,7 @@ router.post('/drafts/:id/submit', authenticateUser, validateObjectId('id'), asyn
     const draft = await Submission.findOne({ 
       _id: req.params.id, 
       userId: req.user._id, 
-      isDraft: true 
+      status: 'draft' 
     });
     
     if (!draft) {
@@ -1112,7 +1112,7 @@ router.delete('/drafts/:id', authenticateUser, validateObjectId('id'), async (re
     const draft = await Submission.findOne({ 
       _id: req.params.id, 
       userId: req.user._id, 
-      isDraft: true 
+      status: 'draft' 
     });
     
     if (!draft) {

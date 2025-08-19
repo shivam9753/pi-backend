@@ -11,10 +11,6 @@ const reviewSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  reviewerName: {
-    type: String,
-    required: true
-  },
   status: {
     type: String,
     enum: ['accepted', 'rejected', 'needs_revision'],

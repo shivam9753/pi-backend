@@ -231,7 +231,6 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
     
     const reviewData = {
       reviewerId: req.user._id,
-      reviewerName: req.user.username,
       status: statusMap[action],
       reviewNotes: reviewNotes ? reviewNotes.trim() : '',
       rating: rating

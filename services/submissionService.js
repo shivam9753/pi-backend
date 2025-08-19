@@ -93,7 +93,6 @@ class SubmissionService {
       submissionType: sub.submissionType,
       tags: sub.tags,
       submitterName: sub.userId?.name || sub.userId?.username || 'Unknown',
-      reviewerName: sub.reviewedBy?.username || 'Unknown'
     }));
 
     return {
@@ -241,7 +240,6 @@ class SubmissionService {
     const review = new Review({
       submissionId: id,
       reviewerId: reviewData.reviewerId,
-      reviewerName: reviewData.reviewerName,
       status: reviewData.status,
       reviewNotes: reviewData.reviewNotes || '',
       rating: reviewData.rating
@@ -527,11 +525,6 @@ class SubmissionService {
         keywords: seoData.keywords || [],
         ogImage: seoData.ogImage || submission.imageUrl,
         canonical: seoData.canonical,
-        publishSettings: {
-          allowComments: seoData.allowComments !== false,
-          enableSocialSharing: seoData.enableSocialSharing !== false,
-          featuredOnHomepage: seoData.featuredOnHomepage === true
-        }
       }
     };
 

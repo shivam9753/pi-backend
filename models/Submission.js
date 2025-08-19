@@ -139,45 +139,11 @@ const submissionSchema = new mongoose.Schema({
       type: String,
       trim: true
     },
-    publishSettings: {
-      allowComments: {
-        type: Boolean,
-        default: true
-      },
-      enableSocialSharing: {
-        type: Boolean,
-        default: true
-      },
-      featuredOnHomepage: {
-        type: Boolean,
-        default: false
-      }
-    }
-  },
-  // Manual purging system  
-  eligibleForPurge: {
-    type: Boolean,
-    default: false,
-    index: true
-  },
-  purgeEligibleSince: {
-    type: Date,
-    index: true
-  },
-  markedForDeletion: {
-    type: Boolean,
-    default: false,
-    index: true
   },
   // Draft-specific fields
   lastEditedAt: {
     type: Date,
     default: Date.now
-  },
-  isDraft: {
-    type: Boolean,
-    default: false,
-    index: true
   },
   draftExpiresAt: {
     type: Date,
@@ -267,8 +233,6 @@ submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, u
     this.assignedAt = null;
   }
   
-  // Mark for purge eligibility based on status
-  this.updatePurgeEligibility();
   return this;
 };
 
@@ -354,26 +318,6 @@ submissionSchema.methods.releaseAssignment = async function() {
   return this;
 };
 
-// Method to update purge eligibility based on status
-submissionSchema.methods.updatePurgeEligibility = function() {
-  const purgeableStatuses = ['rejected', 'spam'];
-  const shouldBeEligible = purgeableStatuses.includes(this.status);
-  
-  if (shouldBeEligible && !this.eligibleForPurge) {
-    this.eligibleForPurge = true;
-    this.purgeEligibleSince = new Date();
-  } else if (!shouldBeEligible && this.eligibleForPurge) {
-    // Status changed back to non-purgeable
-    this.eligibleForPurge = false;
-    this.purgeEligibleSince = null;
-  }
-};
-
-// Method to mark for deletion (soft delete)
-submissionSchema.methods.markForDeletion = async function() {
-  this.markedForDeletion = true;
-  return await this.save();
-};
 
 // Static methods
 submissionSchema.statics.findPublished = function(filters = {}) {
@@ -463,43 +407,11 @@ submissionSchema.statics.findBySlug = function(slug) {
     });
 };
 
-// Manual purging static methods
-submissionSchema.statics.getPurgeableSubmissions = function(olderThanDays = 120) {
-  const cutoffDate = new Date(Date.now() - (olderThanDays * 24 * 60 * 60 * 1000));
-  
-  return this.find({
-    eligibleForPurge: true,
-    purgeEligibleSince: { $lte: cutoffDate },
-    markedForDeletion: { $ne: true }
-  })
-    .populate('userId', 'username email')
-    .sort({ purgeEligibleSince: 1 });
-};
-
-submissionSchema.statics.getPurgeStats = function() {
-  return this.aggregate([
-    {
-      $match: {
-        eligibleForPurge: true,
-        markedForDeletion: { $ne: true }
-      }
-    },
-    {
-      $group: {
-        _id: '$status',
-        count: { $sum: 1 },
-        oldestEligible: { $min: '$purgeEligibleSince' },
-        newestEligible: { $max: '$purgeEligibleSince' }
-      }
-    }
-  ]);
-};
 
 // Draft management static methods
 submissionSchema.statics.findUserDrafts = function(userId) {
   return this.find({
     userId: userId,
-    isDraft: true,
     status: 'draft'
   })
     .populate('contentIds')
@@ -509,7 +421,7 @@ submissionSchema.statics.findUserDrafts = function(userId) {
 submissionSchema.statics.cleanupExpiredDrafts = function() {
   const now = new Date();
   return this.deleteMany({
-    isDraft: true,
+    status: 'draft',
     draftExpiresAt: { $lte: now }
   });
 };
@@ -520,7 +432,6 @@ submissionSchema.statics.createDraft = function(draftData) {
   return this.create({
     ...draftData,
     status: 'draft',
-    isDraft: true,
     lastEditedAt: new Date(),
     draftExpiresAt: oneWeekFromNow
   });
@@ -571,7 +482,6 @@ submissionSchema.methods.updateDraft = function(updateData) {
 };
 
 submissionSchema.methods.convertDraftToSubmission = function() {
-  this.isDraft = false;
   this.status = 'pending_review';
   this.draftExpiresAt = undefined;
   this.lastEditedAt = new Date();
