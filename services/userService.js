@@ -179,7 +179,7 @@ class UserService {
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip))
-      .populate('contentIds', 'title body wordCount');
+      .populate('contentIds', 'title body wordCount footnotes');
 
     return submissions;
   }

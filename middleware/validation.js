@@ -97,6 +97,11 @@ const validateSubmissionCreation = [
   body('contents.*.type')
     .isIn(['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'])
     .withMessage('Content type must be poem, prose, article, book_review, cinema_essay, or opinion'),
+  body('contents.*.footnotes')
+    .optional()
+    .trim()
+    .isLength({ max: 2000 })
+    .withMessage('Footnotes must be less than 2000 characters'),
   handleValidationErrors
 ];
 

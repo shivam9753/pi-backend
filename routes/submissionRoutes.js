@@ -459,7 +459,8 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
           await Content.findByIdAndUpdate(contentData._id, {
             title: contentData.title,
             body: contentData.body,
-            tags: contentData.tags || []
+            tags: contentData.tags || [],
+            footnotes: contentData.footnotes || ''
           });
         }
       }
@@ -496,7 +497,8 @@ router.put('/:id', authenticateUser, requireReviewer, validateObjectId('id'), va
           await Content.findByIdAndUpdate(contentData._id, {
             title: contentData.title,
             body: contentData.body,
-            tags: contentData.tags || []
+            tags: contentData.tags || [],
+            footnotes: contentData.footnotes || ''
           });
         }
       }

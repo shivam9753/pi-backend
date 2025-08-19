@@ -537,6 +537,9 @@ class SubmissionService {
     if (!submission) {
       throw new Error('Published submission not found');
     }
+    
+    // Debug: Log the actual content data
+    console.log('🔍 DEBUG - Raw submission contentIds:', JSON.stringify(submission.contentIds, null, 2));
 
     // Helper function to convert UUID tags to readable names and filter out empty tags
     const convertTagsToNames = (tags) => {
@@ -578,7 +581,8 @@ class SubmissionService {
         title: content.title,
         body: content.body,
         type: content.type,
-        tags: convertTagsToNames(content.tags || [])
+        tags: convertTagsToNames(content.tags || []),
+        footnotes: content.footnotes || ''
       })),
       tags: convertTagsToNames(submission.tags || []),
       viewCount: submission.viewCount || 0

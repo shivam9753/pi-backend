@@ -403,7 +403,7 @@ submissionSchema.statics.findBySlug = function(slug) {
     .populate('userId', 'name username email profileImage')
     .populate({
       path: 'contentIds',
-      select: 'title body type tags'
+      select: 'title body type tags footnotes'
     });
 };
 
@@ -448,7 +448,7 @@ submissionSchema.statics.findTrending = function(limit = 10, windowDays = 7) {
     windowStartTime: { $gte: cutoffTime }
   })
     .populate('userId', 'name username email profileImage')
-    .populate('contentIds', 'title body type tags')
+    .populate('contentIds', 'title body type tags footnotes')
     .sort({ recentViews: -1, viewCount: -1 })
     .limit(limit);
 };
@@ -464,7 +464,7 @@ submissionSchema.statics.findMostViewed = function(limit = 10, timeframe = 'all'
   
   return this.find(query)
     .populate('userId', 'name username email profileImage')
-    .populate('contentIds', 'title body type tags')
+    .populate('contentIds', 'title body type tags footnotes')
     .sort({ viewCount: -1 })
     .limit(limit);
 };

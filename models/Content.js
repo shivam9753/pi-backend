@@ -25,6 +25,10 @@ const contentSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   }],
+  footnotes: {
+    type: String,
+    trim: true
+  },
   metadata: {
     type: mongoose.Schema.Types.Mixed,
     default: {}
