@@ -89,7 +89,8 @@ router.get('/', validatePagination, async (req, res) => {
       order = 'desc',
       featured,
       includeTypes,
-      search
+      search,
+      tag
     } = req.query;
     
     // Build query based on parameters
@@ -124,6 +125,35 @@ router.get('/', validatePagination, async (req, res) => {
         { description: { $regex: search, $options: 'i' } },
         { excerpt: { $regex: search, $options: 'i' } }
       ];
+    }
+    
+    // Tag filtering - need to find submissions through content collection
+    let submissionIdsFromTags = null;
+    if (tag) {
+      const Content = require('../models/Content');
+      const contentsWithTag = await Content.find({ 
+        tags: { $in: [tag.toLowerCase()] },
+        isPublished: true 
+      }).select('submissionId').lean();
+      
+      submissionIdsFromTags = contentsWithTag.map(content => content.submissionId).filter(id => id);
+      
+      if (submissionIdsFromTags.length === 0) {
+        // No content found with this tag, return empty result early
+        return res.json({
+          submissions: [],
+          total: 0,
+          pagination: {
+            limit: parseInt(limit),
+            skip: parseInt(skip),
+            currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
+            totalPages: 0,
+            hasMore: false
+          }
+        });
+      }
+      
+      query._id = { $in: submissionIdsFromTags };
     }
     
     // Different field selection based on status
@@ -166,7 +196,14 @@ router.get('/', validatePagination, async (req, res) => {
         readingTime: sub.readingTime,
         tags: sub.tags,
         slug: sub.seo?.slug,
-        authorName: sub.userId.name || sub.userId.username || 'Unknown'
+        authorName: sub.userId.name || sub.userId.username || 'Unknown',
+        author: {
+          _id: sub.userId._id,
+          name: sub.userId.name || sub.userId.username || 'Unknown',
+          username: sub.userId.username,
+          email: sub.userId.email,
+          profileImage: sub.userId.profileImage
+        }
       }));
     } else if (status === 'published_and_draft') {
       // Special case for published_and_draft - include status field
@@ -180,6 +217,13 @@ router.get('/', validatePagination, async (req, res) => {
         tags: sub.tags,
         status: sub.status,
         authorName: sub.userId.name || sub.userId.username || 'Unknown',
+        author: {
+          _id: sub.userId._id,
+          name: sub.userId.name || sub.userId.username || 'Unknown',
+          username: sub.userId.username,
+          email: sub.userId.email,
+          profileImage: sub.userId.profileImage
+        },
         createdAt: sub.createdAt,
         reviewedAt: sub.reviewedAt,
         viewCount: sub.viewCount || 0,
@@ -196,6 +240,13 @@ router.get('/', validatePagination, async (req, res) => {
         tags: sub.tags,
         status: sub.status,
         authorName: sub.userId.name || sub.userId.username || 'Unknown',
+        author: {
+          _id: sub.userId._id,
+          name: sub.userId.name || sub.userId.username || 'Unknown',
+          username: sub.userId.username,
+          email: sub.userId.email,
+          profileImage: sub.userId.profileImage
+        },
         createdAt: sub.createdAt,
         reviewedAt: sub.reviewedAt
       }));
@@ -398,6 +449,47 @@ router.get('/:id/contents', authenticateUser, validateObjectId('id'), async (req
       return res.status(404).json({ message: error.message });
     }
     res.status(500).json({ message: 'Error fetching submission with contents', error: error.message });
+  }
+});
+
+// GET /api/submissions/:id/review - Get submission data optimized for reviewers
+router.get('/:id/review', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
+    
+    // Return only the essential data reviewers need
+    const reviewData = {
+      _id: submission._id,
+      title: submission.title,
+      description: submission.description,
+      submissionType: submission.submissionType,
+      status: submission.status,
+      imageUrl: submission.imageUrl,
+      excerpt: submission.excerpt,
+      readingTime: submission.readingTime,
+      createdAt: submission.createdAt,
+      updatedAt: submission.updatedAt,
+      userId: {
+        _id: submission.userId._id,
+        name: submission.userId.name,
+        username: submission.userId.username
+      },
+      contents: submission.contents.map(content => ({
+        _id: content._id,
+        title: content.title,
+        body: content.body,
+        type: content.type,
+        tags: content.tags,
+        footnotes: content.footnotes
+      }))
+    };
+    
+    res.json(reviewData);
+  } catch (error) {
+    if (error.message === 'Submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error fetching submission for review', error: error.message });
   }
 });
 
@@ -1196,7 +1288,8 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
         title: content.title,
         body: content.body,
         type: content.type || submissionType,
-        tags: content.tags || []
+        tags: content.tags || [],
+        footnotes: content.footnotes || ''
       }));
       
       const createdContents = await Content.create(contentDocs);
@@ -1262,7 +1355,8 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), async (req
         title: content.title,
         body: content.body,
         type: content.type || submissionType,
-        tags: content.tags || []
+        tags: content.tags || [],
+        footnotes: content.footnotes || ''
       }));
       
       const createdContents = await Content.create(contentDocs);
