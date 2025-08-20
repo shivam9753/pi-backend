@@ -20,7 +20,7 @@ router.use(adminOnly);
 // Create new user
 router.post('/users', async (req, res) => {
   try {
-    const { name, username, email } = req.body;
+    const { name, username, email, bio, role } = req.body;
 
     // Validate input
     if (!name || !username || !email) {
@@ -29,6 +29,10 @@ router.post('/users', async (req, res) => {
         message: 'Name, username, and email are required' 
       });
     }
+
+    // Validate role if provided
+    const validRoles = ['user', 'curator', 'reviewer', 'admin'];
+    const userRole = role && validRoles.includes(role) ? role : 'user';
 
     // Check if user already exists
     const existingUser = await User.findOne({ 
@@ -51,8 +55,9 @@ router.post('/users', async (req, res) => {
       name,
       username,
       email,
+      bio: bio || '', // Include bio field
       password: hashedPassword,
-      role: 'user',
+      role: userRole, // Use validated role
       needsProfileCompletion: false,
       isEmailVerified: true
     });
