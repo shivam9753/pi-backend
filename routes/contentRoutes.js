@@ -3,6 +3,7 @@ const Content = require('../models/Content');
 const Submission = require('../models/Submission');
 const { authenticateUser, requireReviewer, requireAdmin } = require('../middleware/auth');
 const { validateObjectId, validatePagination } = require('../middleware/validation');
+const { mapSingleTag, filterUnmappedUuids, isUuidTag } = require('../utils/tagMapping');
 
 const router = express.Router();
 
@@ -374,20 +375,6 @@ router.get('/:slug', async (req, res) => {
 router.get('/tags/popular', async (req, res) => {
   try {
     const { limit = 10 } = req.query;
-    
-    // UUID to tag name mapping (expand this as needed)
-    const tagMapping = {
-      'dcaa20cc-3602-49ec-a6bc-5f5c5eb33f5f': 'meta',
-      '5e51b78c-dc53-4f57-bc34-02bf17676ca3': 'morono', 
-      '6360581e-c29e-4b3c-bb12-e3b5d36f8178': 'baluch',
-      'd8437b93-8ff7-4f0e-a854-34ada90ac4d5': 'poetry',
-      '85edca40-f7a2-4eea-a099-c3fc58d3583b': 'prose',
-      '93476858-45c9-4c5c-9c3a-be807002a4f5': 'cinema',
-      'd5d5afe3-e001-4ad4-8626-46870429055': 'literature',
-      '623fae81-2547-4df5-a3b7-546af3366f2e': 'stories',
-      '6afbff37-4160-4e50-9f5e-0b48ba09de06': 'articles',
-      'ce85a0c8-e23f-47a7-be91-9167b43424d1': 'reviews'
-    };
 
     const popularTags = await Content.aggregate([
       { $match: { isPublished: true } },
@@ -411,13 +398,13 @@ router.get('/tags/popular', async (req, res) => {
       }
     ]);
     
-    // Convert UUIDs to readable tag names and filter out unmapped ones
+    // Filter out UUID tags and keep only readable tags
     const mappedTags = popularTags
       .map(tagInfo => ({
         ...tagInfo,
-        tag: tagMapping[tagInfo.tag] || tagInfo.tag
+        tag: mapSingleTag(tagInfo.tag)
       }))
-      .filter(tagInfo => tagMapping[tagInfo.tag] || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tagInfo.tag))
+      .filter(tagInfo => tagInfo.tag.length > 0) // Filter out empty tags (UUIDs get filtered to empty strings)
       .slice(0, parseInt(limit));
 
     res.json({ 

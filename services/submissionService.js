@@ -7,6 +7,7 @@ const {
   STATUS_ARRAYS,
   STATUS_UTILS 
 } = require('../constants/status.constants');
+const { mapTagArray } = require('../utils/tagMapping');
 
 class SubmissionService {
   static async createSubmission(submissionData) {
@@ -541,28 +542,9 @@ class SubmissionService {
     // Debug: Log the actual content data
     console.log('🔍 DEBUG - Raw submission contentIds:', JSON.stringify(submission.contentIds, null, 2));
 
-    // Helper function to convert UUID tags to readable names and filter out empty tags
+    // Helper function to convert UUID tags to readable names using centralized utility
     const convertTagsToNames = (tags) => {
-      if (!Array.isArray(tags)) return [];
-      
-      // Map UUID tags to readable names  
-      const tagMapping = {
-        'bc1f1725-d6f4-4686-8094-11c8bd39183f': 'psychology',
-        '325213e4-4607-42b2-9d5d-fd99e8228552': 'philosophy',
-        // Add more mappings as needed
-      };
-      
-      return tags
-        .filter(tag => tag && tag.trim().length > 0) // Filter out empty/null tags
-        .map(tag => {
-          // Check if tag is a UUID format and exists in mapping
-          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-          if (uuidRegex.test(tag) && tagMapping[tag]) {
-            return tagMapping[tag];
-          }
-          // Return original tag if not a UUID or no mapping found
-          return tag.trim();
-        });
+      return mapTagArray(tags);
     };
 
     // Clean and minimal response

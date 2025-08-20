@@ -93,7 +93,7 @@ const contentSchema = new mongoose.Schema({
     },
     metaTitle: {
       type: String,
-      maxlength: 60,
+      maxlength: 70,
       trim: true
     },
     metaDescription: {
