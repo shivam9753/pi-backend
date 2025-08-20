@@ -777,14 +777,17 @@ router.delete('/:id/image', authenticateUser, requireReviewer, validateObjectId(
       console.log('⚠️ Could not extract S3 key from URL, skipping S3 deletion');
     }
 
-    // Remove image URL from submission
-    submission.imageUrl = '';
-    await submission.save({ validateBeforeSave: false });
+    // Remove image URL from submission - use direct update to avoid validation issues
+    const updatedSubmission = await Submission.findByIdAndUpdate(
+      req.params.id,
+      { imageUrl: '' },
+      { runValidators: false, new: true }
+    );
 
     res.json({
       success: true,
       message: 'Image deleted successfully',
-      submission
+      submission: updatedSubmission
     });
   } catch (error) {
     console.error('Error deleting submission image:', error);
