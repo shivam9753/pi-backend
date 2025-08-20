@@ -779,7 +779,7 @@ router.delete('/:id/image', authenticateUser, requireReviewer, validateObjectId(
 
     // Remove image URL from submission
     submission.imageUrl = '';
-    await submission.save();
+    await submission.save({ validateBeforeSave: false });
 
     res.json({
       success: true,
