@@ -546,16 +546,37 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
     
     // Update contents if provided
     if (req.body.contents && Array.isArray(req.body.contents)) {
+      const newContentIds = [];
+      
       for (const contentData of req.body.contents) {
         if (contentData._id) {
+          // Update existing content
           await Content.findByIdAndUpdate(contentData._id, {
             title: contentData.title,
             body: contentData.body,
             tags: contentData.tags || [],
             footnotes: contentData.footnotes || ''
           });
+          newContentIds.push(contentData._id);
+        } else {
+          // Create new content
+          const newContent = await Content.create({
+            title: contentData.title,
+            body: contentData.body,
+            tags: contentData.tags || [],
+            footnotes: contentData.footnotes || '',
+            userId: submission.userId,
+            submissionId: submission._id,
+            type: contentData.type || submission.submissionType,
+            isPublished: submission.status === 'published'
+          });
+          newContentIds.push(newContent._id);
         }
       }
+      
+      // Update submission's contentIds array
+      submission.contentIds = newContentIds;
+      await submission.save();
     }
 
     res.json({
@@ -584,16 +605,37 @@ router.put('/:id', authenticateUser, requireReviewer, validateObjectId('id'), va
 
     // Update contents if provided
     if (req.body.contents && Array.isArray(req.body.contents)) {
+      const newContentIds = [];
+      
       for (const contentData of req.body.contents) {
         if (contentData._id) {
+          // Update existing content
           await Content.findByIdAndUpdate(contentData._id, {
             title: contentData.title,
             body: contentData.body,
             tags: contentData.tags || [],
             footnotes: contentData.footnotes || ''
           });
+          newContentIds.push(contentData._id);
+        } else {
+          // Create new content
+          const newContent = await Content.create({
+            title: contentData.title,
+            body: contentData.body,
+            tags: contentData.tags || [],
+            footnotes: contentData.footnotes || '',
+            userId: submission.userId,
+            submissionId: submission._id,
+            type: contentData.type || submission.submissionType,
+            isPublished: submission.status === 'published'
+          });
+          newContentIds.push(newContent._id);
         }
       }
+      
+      // Update submission's contentIds array
+      submission.contentIds = newContentIds;
+      await submission.save();
     }
 
     res.json({
