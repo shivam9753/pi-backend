@@ -96,7 +96,7 @@ const submissionSchema = new mongoose.Schema({
     userRole: {
       type: String,
       enum: STATUS_ARRAYS.ALL_USER_ROLES,
-      required: true
+      required: false
     },
     notes: {
       type: String,
@@ -197,16 +197,22 @@ submissionSchema.methods.toggleFeatured = async function() {
 };
 
 // Method to add history entry
-submissionSchema.methods.addHistoryEntry = function(action, newStatus, userId, userRole, notes = '') {
-  // Validate required parameters
+submissionSchema.methods.addHistoryEntry = async function(action, newStatus, userId, userRole, notes = '') {
+  // If userRole is not provided, get it from the user
   if (!userRole) {
-    throw new Error('userRole is required for history entry');
+    const User = require('./User');
+    const userData = await User.findById(userId).select('role');
+    if (userData) {
+      userRole = userData.role;
+    }
   }
   
-  // Validate that the userRole is valid
-  const { STATUS_ARRAYS } = require('../constants/status.constants');
-  if (!STATUS_ARRAYS.ALL_USER_ROLES.includes(userRole)) {
-    throw new Error(`Invalid userRole: ${userRole}. Must be one of: ${STATUS_ARRAYS.ALL_USER_ROLES.join(', ')}`);
+  // Validate that the userRole is valid if provided
+  if (userRole) {
+    const { STATUS_ARRAYS } = require('../constants/status.constants');
+    if (!STATUS_ARRAYS.ALL_USER_ROLES.includes(userRole)) {
+      throw new Error(`Invalid userRole: ${userRole}. Must be one of: ${STATUS_ARRAYS.ALL_USER_ROLES.join(', ')}`);
+    }
   }
   
   this.history.push({
@@ -277,7 +283,7 @@ submissionSchema.methods.changeStatus = async function(newStatus, user, notes = 
   this.status = newStatus;
   
   // Add history entry
-  this.addHistoryEntry(action, newStatus, userId, userRole, notes);
+  await this.addHistoryEntry(action, newStatus, userId, userRole, notes);
   
   if (newStatus === SUBMISSION_STATUS.NEEDS_CHANGES || newStatus === SUBMISSION_STATUS.NEEDS_REVISION) {
     this.revisionNotes = notes;
