@@ -33,6 +33,13 @@ router.get('/', validatePagination, async (req, res) => {
       query.isPublished = true;
     }
     
+    // Featured filter
+    if (req.query.featured === 'true') {
+      query.isFeatured = true;
+    } else if (req.query.featured === 'false') {
+      query.isFeatured = false;
+    }
+    
     // Type filter
     if (type) query.type = type;
     
@@ -73,6 +80,8 @@ router.get('/', validatePagination, async (req, res) => {
       type: content.type,
       tags: content.tags,
       publishedAt: content.publishedAt,
+      isFeatured: content.isFeatured,
+      featuredAt: content.featuredAt,
       slug: content.seo?.slug,
       author: {
         _id: content.userId._id,
@@ -298,6 +307,54 @@ router.get('/by-author/:userId', validateObjectId('userId'), validatePagination,
   } catch (error) {
     console.error('Error fetching content by author:', error);
     res.status(500).json({ message: 'Error fetching content by author', error: error.message });
+  }
+});
+
+// GET /api/content/id/:contentId - Get individual content by ID
+router.get('/id/:contentId', validateObjectId('contentId'), async (req, res) => {
+  try {
+    const { contentId } = req.params;
+
+    const content = await Content.findById(contentId)
+      .where('isPublished', true)
+      .populate('userId', 'username name profileImage')
+      .populate('submissionId', 'title submissionType seo');
+
+    if (!content) {
+      return res.status(404).json({ message: 'Published content not found' });
+    }
+
+    // Transform for frontend (similar to the main content endpoint)
+    const transformedContent = {
+      _id: content._id,
+      title: content.title,
+      body: content.body,
+      type: content.type,
+      tags: content.tags,
+      publishedAt: content.publishedAt,
+      isFeatured: content.isFeatured,
+      featuredAt: content.featuredAt,
+      viewCount: content.viewCount || 0,
+      slug: content.seo?.slug,
+      author: {
+        _id: content.userId._id,
+        username: content.userId.username,
+        name: content.userId.name,
+        profileImage: content.userId.profileImage
+      },
+      submission: {
+        _id: content.submissionId._id,
+        title: content.submissionId.title,
+        type: content.submissionId.submissionType,
+        slug: content.submissionId.seo?.slug
+      }
+    };
+
+    res.json(transformedContent);
+
+  } catch (error) {
+    console.error('Error fetching content by ID:', error);
+    res.status(500).json({ message: 'Error fetching content', error: error.message });
   }
 });
 
@@ -544,6 +601,86 @@ router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) 
   } catch (error) {
     console.error('Error incrementing view count:', error);
     res.status(500).json({ message: 'Error updating view count', error: error.message });
+  }
+});
+
+
+// POST /api/content/:contentId/feature - Mark content as featured (Admin/Reviewer only)
+router.post('/:contentId/feature', authenticateUser, requireReviewer, validateObjectId('contentId'), async (req, res) => {
+  try {
+    const { contentId } = req.params;
+
+    const content = await Content.findById(contentId);
+    if (!content) {
+      return res.status(404).json({ message: 'Content not found' });
+    }
+
+    // Check if content is published
+    if (!content.isPublished) {
+      return res.status(400).json({ 
+        message: 'Can only feature published content' 
+      });
+    }
+
+    // Check if already featured
+    if (content.isFeatured) {
+      return res.status(400).json({ message: 'Content is already featured' });
+    }
+
+    // Mark as featured
+    content.isFeatured = true;
+    content.featuredAt = new Date();
+    await content.save();
+
+    res.json({
+      success: true,
+      message: 'Content marked as featured successfully',
+      content: {
+        _id: content._id,
+        title: content.title,
+        isFeatured: content.isFeatured,
+        featuredAt: content.featuredAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Error featuring content:', error);
+    res.status(500).json({ message: 'Error featuring content', error: error.message });
+  }
+});
+
+// POST /api/content/:contentId/unfeature - Remove featured status (Admin/Reviewer only)
+router.post('/:contentId/unfeature', authenticateUser, requireReviewer, validateObjectId('contentId'), async (req, res) => {
+  try {
+    const { contentId } = req.params;
+
+    const content = await Content.findById(contentId);
+    if (!content) {
+      return res.status(404).json({ message: 'Content not found' });
+    }
+
+    if (!content.isFeatured) {
+      return res.status(400).json({ message: 'Content is not featured' });
+    }
+
+    // Remove featured status
+    content.isFeatured = false;
+    content.featuredAt = null;
+    await content.save();
+
+    res.json({
+      success: true,
+      message: 'Featured status removed successfully',
+      content: {
+        _id: content._id,
+        title: content.title,
+        isFeatured: content.isFeatured
+      }
+    });
+
+  } catch (error) {
+    console.error('Error unfeaturing content:', error);
+    res.status(500).json({ message: 'Error unfeaturing content', error: error.message });
   }
 });
 

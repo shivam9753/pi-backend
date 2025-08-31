@@ -79,53 +79,6 @@ router.post('/admin/users', authenticateUser, requireAdmin, async (req, res) => 
   }
 });
 
-// POST /admin/users/:id/upload-profile-image - Upload profile image for user (admin only)
-router.post('/admin/users/:id/upload-profile-image', 
-  authenticateUser, 
-  requireAdmin, 
-  validateObjectId('id'),
-  upload.single('profileImage'), 
-  async (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ message: 'No image file provided' });
-      }
-
-      const user = await User.findById(req.params.id);
-      if (!user) {
-        return res.status(404).json({ message: 'User not found' });
-      }
-
-      // Upload image using ImageService
-      const uploadResult = await ImageService.uploadImage(
-        req.file.buffer, 
-        req.file.originalname,
-        { folder: 'profiles' }
-      );
-
-      if (!uploadResult.success) {
-        return res.status(500).json({ 
-          message: 'Image upload failed', 
-          error: uploadResult.error 
-        });
-      }
-
-      // Update user profile image
-      user.profileImage = uploadResult.url;
-      await user.save();
-
-      res.json({
-        success: true,
-        message: 'Profile image uploaded successfully',
-        imageUrl: uploadResult.url,
-        user: user.toPublicJSON()
-      });
-    } catch (error) {
-      console.error('Error uploading profile image:', error);
-      res.status(500).json({ message: 'Error uploading profile image', error: error.message });
-    }
-  }
-);
 
 // GET /api/users/search - Search users
 router.get('/search', validatePagination, async (req, res) => {

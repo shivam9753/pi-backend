@@ -71,8 +71,28 @@ app.set('trust proxy', 1);
 
 // Middleware
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Conditional parsing - exclude file upload routes from JSON and urlencoded parsing
+app.use((req, res, next) => {
+  // Skip all body parsing for file upload routes - let multer handle it
+  if (req.url.includes('/upload-profile-image') || 
+      req.url.includes('/api/images/upload')) {
+    console.log('🔧 Skipping body parsing for file upload route:', req.url);
+    return next();
+  }
+  // Apply JSON parsing for all other routes
+  express.json({ limit: '10mb' })(req, res, next);
+});
+
+app.use((req, res, next) => {
+  // Skip urlencoded parsing for file upload routes
+  if (req.url.includes('/upload-profile-image') || 
+      req.url.includes('/api/images/upload')) {
+    return next();
+  }
+  // Apply urlencoded parsing for all other routes
+  express.urlencoded({ extended: true, limit: '10mb' })(req, res, next);
+});
 
 app.use(cors({
   origin: process.env.FRONTEND_URLS ? process.env.FRONTEND_URLS.split(',') : [

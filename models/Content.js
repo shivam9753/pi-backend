@@ -70,6 +70,15 @@ const contentSchema = new mongoose.Schema({
   publishedAt: {
     type: Date
   },
+  // Featured content flag for highlighting
+  isFeatured: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  featuredAt: {
+    type: Date
+  },
   viewCount: {
     type: Number,
     default: 0,
@@ -116,6 +125,10 @@ contentSchema.index({ createdAt: -1 });
 contentSchema.index({ isPublished: 1 });
 contentSchema.index({ isPublished: 1, publishedAt: -1 });
 contentSchema.index({ isPublished: 1, tags: 1 });
+// Featured content indexes
+contentSchema.index({ isFeatured: 1 });
+contentSchema.index({ isFeatured: 1, featuredAt: -1 });
+contentSchema.index({ isPublished: 1, isFeatured: 1 });
 contentSchema.index({ submissionId: 1 });
 // SEO indexes
 contentSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });

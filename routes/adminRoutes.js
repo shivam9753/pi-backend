@@ -1,9 +1,24 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
 const User = require('../models/User');
 const Submission = require('../models/Submission');
 const { authenticateUser } = require('../middleware/auth');
+const { ImageService } = require('../config/imageService');
+
+// Configure multer for profile image uploads
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
+    }
+  }
+});
 
 // Middleware to ensure admin access
 const adminOnly = (req, res, next) => {
@@ -236,5 +251,80 @@ router.put('/submissions/bulk-reassign', async (req, res) => {
     });
   }
 });
+
+// POST /api/admin/users/:id/upload-profile-image - Upload profile image for user (admin only)
+router.post('/users/:id/upload-profile-image', 
+  (req, res, next) => {
+    upload.single('profileImage')(req, res, (err) => {
+      if (err) {
+        console.log('❌ Multer error:', err.message);
+        return res.status(400).json({ message: 'File upload error: ' + err.message });
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    try {
+      console.log('🔧 Profile image upload for user:', req.params.id);
+      console.log('🔧 File received:', req.file ? 'YES' : 'NO');
+      
+      if (!req.file) {
+        console.log('❌ No file in request');
+        return res.status(400).json({ message: 'No image file provided' });
+      }
+
+      console.log('🔧 File details:', {
+        fieldname: req.file.fieldname,
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size
+      });
+
+      const user = await User.findById(req.params.id);
+      if (!user) {
+        console.log('❌ User not found:', req.params.id);
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      console.log('🔧 User found:', user.name);
+
+      // Upload image using ImageService
+      console.log('🔧 Starting ImageService upload...');
+      const uploadResult = await ImageService.uploadImage(
+        req.file.buffer, 
+        req.file.originalname,
+        { folder: 'profiles' }
+      );
+
+      console.log('🔧 Upload result:', uploadResult);
+
+      if (!uploadResult.success) {
+        console.log('❌ Image upload failed:', uploadResult.error);
+        return res.status(500).json({ 
+          message: 'Image upload failed', 
+          error: uploadResult.error 
+        });
+      }
+
+      console.log('✅ Image uploaded successfully:', uploadResult.url);
+
+      // Update user profile image
+      user.profileImage = uploadResult.url;
+      await user.save();
+
+      console.log('✅ User profile updated with image URL');
+
+      res.json({
+        success: true,
+        message: 'Profile image uploaded successfully',
+        imageUrl: uploadResult.url,
+        user: user.toPublicJSON()
+      });
+    } catch (error) {
+      console.error('❌ Error uploading profile image:', error);
+      res.status(500).json({ message: 'Error uploading profile image', error: error.message });
+    }
+  }
+);
 
 module.exports = router;
