@@ -37,10 +37,10 @@ const createSlowDown = (windowMs, delayAfter, delayMs) => {
   });
 };
 
-// General rate limiter - 100 requests per 15 minutes
+// General rate limiter - More lenient: 500 requests per 15 minutes
 const generalLimiter = createRateLimit(
   15 * 60 * 1000, // 15 minutes
-  100,
+  500,
   'Too many requests from this IP, please try again later'
 );
 
@@ -52,10 +52,10 @@ const authLimiter = createRateLimit(
   'Too many authentication attempts, please try again later'
 );
 
-// API rate limiter - 200 requests per 15 minutes
+// API rate limiter - More lenient: 1000 requests per 15 minutes
 const apiLimiter = createRateLimit(
   15 * 60 * 1000, // 15 minutes
-  200,
+  1000,
   'Too many API requests, please try again later'
 );
 
@@ -66,11 +66,11 @@ const uploadLimiter = createRateLimit(
   'Too many upload attempts, please try again later'
 );
 
-// Slow down for repeated requests
+// Slow down for repeated requests - More lenient thresholds
 const speedLimiter = createSlowDown(
   15 * 60 * 1000, // 15 minutes
-  50, // Start slowing down after 50 requests
-  500 // Delay each request by 500ms after threshold
+  200, // Start slowing down after 200 requests (was 50)
+  100 // Delay each request by 100ms after threshold (was 500ms)
 );
 
 // Security headers configuration

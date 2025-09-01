@@ -10,7 +10,7 @@ const { ImageService } = require('../config/imageService');
 // Configure multer for profile image uploads
 const upload = multer({ 
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB limit
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
@@ -148,16 +148,38 @@ router.put('/submissions/:id/reassign', async (req, res) => {
     const { id } = req.params;
     const { newUserId } = req.body;
 
-    // Validate input
-    if (!newUserId) {
+    console.log(`🔄 Admin reassignment request: ${id} -> ${newUserId}`);
+
+    // Validate input with detailed error logging
+    if (!id || typeof id !== 'string') {
+      console.error('❌ Invalid submission ID:', id);
       return res.status(400).json({ 
         success: false, 
-        message: 'New user ID is required' 
+        message: 'Valid submission ID is required' 
       });
     }
 
-    // Check if new user exists
-    const newUser = await User.findById(newUserId);
+    if (!newUserId || typeof newUserId !== 'string') {
+      console.error('❌ Invalid new user ID:', newUserId);
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Valid new user ID is required' 
+      });
+    }
+
+    // Check if new user exists with enhanced error handling
+    let newUser;
+    try {
+      newUser = await User.findById(newUserId);
+      console.log(`👤 Target user lookup result: ${newUser ? 'Found' : 'Not found'}`);
+    } catch (userError) {
+      console.error('❌ Error finding new user:', userError);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Error validating new user' 
+      });
+    }
+
     if (!newUser) {
       return res.status(404).json({ 
         success: false, 
@@ -165,12 +187,23 @@ router.put('/submissions/:id/reassign', async (req, res) => {
       });
     }
 
-    // Update submission
-    const submission = await Submission.findByIdAndUpdate(
-      id,
-      { userId: newUserId },
-      { new: true }
-    ).populate('userId', 'name username email');
+    // Update submission with enhanced error handling
+    let submission;
+    try {
+      submission = await Submission.findByIdAndUpdate(
+        id,
+        { userId: newUserId },
+        { new: true, runValidators: true }
+      ).populate('userId', 'name username email');
+      
+      console.log(`📝 Submission update result: ${submission ? 'Success' : 'Not found'}`);
+    } catch (updateError) {
+      console.error('❌ Error updating submission:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Error updating submission' 
+      });
+    }
 
     if (!submission) {
       return res.status(404).json({ 
@@ -179,18 +212,29 @@ router.put('/submissions/:id/reassign', async (req, res) => {
       });
     }
 
+    console.log(`✅ Successfully reassigned submission ${id} to user ${newUser.name}`);
+
     res.json({
       success: true,
-      message: 'Submission reassigned successfully',
+      message: `Submission successfully reassigned to ${newUser.name}`,
       submission
     });
 
   } catch (error) {
-    console.error('Reassign submission error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    console.error('💥 CRITICAL ERROR in submission reassignment:', error);
+    console.error('Error details:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
     });
+    
+    // Always return a response to prevent hanging requests
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        success: false, 
+        message: 'Internal server error during reassignment' 
+      });
+    }
   }
 });
 
