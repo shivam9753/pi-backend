@@ -164,11 +164,25 @@ router.get('/', validatePagination, async (req, res) => {
       selectFields = 'title excerpt imageUrl readingTime submissionType tags userId reviewedBy createdAt reviewedAt status';
     }
     
+    // Create a deterministic sort - handle null values properly and ensure consistent results
+    let sortOptions;
+    if (sortBy === 'reviewedAt') {
+      // For reviewedAt, fallback to createdAt for null values, then _id for full determinism
+      sortOptions = { 
+        reviewedAt: order === 'asc' ? 1 : -1, 
+        createdAt: order === 'asc' ? 1 : -1, 
+        _id: -1 
+      };
+    } else {
+      // For other fields, just add _id as secondary sort
+      sortOptions = { [sortBy]: order === 'asc' ? 1 : -1, _id: -1 };
+    }
+    
     const submissions = await Submission.find(query)
       .select(selectFields)
       .populate('userId', 'name username email profileImage')
       .populate('reviewedBy', 'username')
-      .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
+      .sort(sortOptions)
       .limit(parseInt(limit))
       .skip(parseInt(skip))
       .lean();
