@@ -431,29 +431,47 @@ router.get('/:slug', async (req, res) => {
 // GET /api/content/tags/popular - Get trending/popular tags
 router.get('/tags/popular', async (req, res) => {
   try {
+    // Set cache control headers to prevent caching issues
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
+    
     const { limit = 10 } = req.query;
 
-    const popularTags = await Content.aggregate([
-      { $match: { isPublished: true } },
-      { $unwind: '$tags' },
-      { 
-        $group: {
-          _id: '$tags',
-          count: { $sum: 1 },
-          latestPublished: { $max: '$publishedAt' }
-        }
-      },
-      { $sort: { count: -1, latestPublished: -1 } },
-      { $limit: parseInt(limit) * 2 }, // Get more to account for unmapped UUIDs
-      {
-        $project: {
-          tag: '$_id',
-          count: 1,
-          latestPublished: 1,
-          _id: 0
-        }
+    // Get popular tags from published submissions
+    const publishedSubmissions = await Submission.find({ status: 'published' })
+      .populate('contentIds')
+      .lean();
+    
+    // Extract all tags from all content pieces
+    const allTags = [];
+    publishedSubmissions.forEach(submission => {
+      if (submission.contentIds && Array.isArray(submission.contentIds)) {
+        submission.contentIds.forEach(content => {
+          if (content && content.tags && Array.isArray(content.tags)) {
+            content.tags.forEach(tag => {
+              if (tag && typeof tag === 'string' && tag.trim()) {
+                allTags.push(tag.trim().toLowerCase());
+              }
+            });
+          }
+        });
       }
-    ]);
+    });
+    
+    // Count tag frequencies
+    const tagCounts = {};
+    allTags.forEach(tag => {
+      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    });
+    
+    // Convert to array and sort by count
+    const popularTags = Object.entries(tagCounts)
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, parseInt(limit));
     
     // Filter out UUID tags and keep only readable tags
     const mappedTags = popularTags
@@ -461,9 +479,54 @@ router.get('/tags/popular', async (req, res) => {
         ...tagInfo,
         tag: mapSingleTag(tagInfo.tag)
       }))
-      .filter(tagInfo => tagInfo.tag.length > 0) // Filter out empty tags (UUIDs get filtered to empty strings)
-      .slice(0, parseInt(limit));
+      .filter(tagInfo => tagInfo.tag.length > 0); // Filter out empty tags (UUIDs get filtered to empty strings)
 
+    
+    // Fallback: If no tags found, try getting from any submissions that the frontend is showing
+    if (mappedTags.length === 0) {
+      // This mirrors the query used by the explore page frontend
+      const fallbackSubmissions = await Submission.find({ status: 'published' })
+        .populate('contentIds')
+        .sort({ reviewedAt: -1, createdAt: -1, _id: -1 })
+        .limit(20)
+        .lean();
+      
+      // Try to extract tags from these submissions
+      const fallbackTags = [];
+      fallbackSubmissions.forEach(submission => {
+        // Check if tags are directly on submission
+        if (submission.tags && Array.isArray(submission.tags)) {
+          submission.tags.forEach(tag => {
+            if (tag && typeof tag === 'string' && tag.trim()) {
+              fallbackTags.push(tag.trim().toLowerCase());
+            }
+          });
+        }
+        
+        // Also check content pieces
+        if (submission.contentIds && Array.isArray(submission.contentIds)) {
+          submission.contentIds.forEach(content => {
+            if (content && content.tags && Array.isArray(content.tags)) {
+              content.tags.forEach(tag => {
+                if (tag && typeof tag === 'string' && tag.trim()) {
+                  fallbackTags.push(tag.trim().toLowerCase());
+                }
+              });
+            }
+          });
+        }
+      });
+      
+      if (fallbackTags.length > 0) {
+        // Return the fallback tags
+        const uniqueFallbackTags = [...new Set(fallbackTags)].slice(0, parseInt(limit));
+        
+        return res.json({ 
+          tags: uniqueFallbackTags.filter(tag => !isUuidTag(tag))
+        });
+      }
+    }
+    
     res.json({ 
       tags: mappedTags.map(t => t.tag)
     });

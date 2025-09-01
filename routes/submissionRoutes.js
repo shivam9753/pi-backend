@@ -80,6 +80,13 @@ router.get('/:id/history', authenticateUser, validateObjectId('id'), async (req,
 // GET /api/submissions - Consolidated endpoint for submissions with enhanced filtering
 router.get('/', validatePagination, async (req, res) => {
   try {
+    // Add cache control headers to prevent stale data
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
+    
     const { 
       status, 
       type, 
@@ -131,12 +138,31 @@ router.get('/', validatePagination, async (req, res) => {
     let submissionIdsFromTags = null;
     if (tag) {
       const Content = require('../models/Content');
+      
+      // Try searching in both Content collection and Submission collection
       const contentsWithTag = await Content.find({ 
         tags: { $in: [tag.toLowerCase()] },
         isPublished: true 
-      }).select('submissionId').lean();
+      }).select('submissionId tags').lean();
       
-      submissionIdsFromTags = contentsWithTag.map(content => content.submissionId).filter(id => id);
+      // Also search in submissions that have tags in their content
+      const submissionsWithTag = await Submission.find({
+        status: 'published'
+      }).populate({
+        path: 'contentIds',
+        match: { tags: { $in: [tag.toLowerCase()] } }
+      }).lean();
+      
+      // Filter out submissions where no content matched the tag
+      const validSubmissionsWithTag = submissionsWithTag.filter(sub => 
+        sub.contentIds && sub.contentIds.length > 0
+      );
+      
+      // Combine IDs from both approaches
+      let contentSubmissionIds = contentsWithTag.map(content => content.submissionId).filter(id => id);
+      let populatedSubmissionIds = validSubmissionsWithTag.map(sub => sub._id);
+      
+      submissionIdsFromTags = [...new Set([...contentSubmissionIds, ...populatedSubmissionIds])];
       
       if (submissionIdsFromTags.length === 0) {
         // No content found with this tag, return empty result early
