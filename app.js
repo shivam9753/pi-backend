@@ -47,6 +47,7 @@ require('./models/User');
 require('./models/Submission');
 require('./models/Content');
 require('./models/Review');
+require('./models/TopicPitch');
 
 // Import route modules
 const userRoutes = require('./routes/userRoutes');
@@ -57,6 +58,7 @@ const promptRoutes = require('./routes/prompts');
 const imageRoutes = require('./routes/imageRoutes');
 const purgeRoutes = require('./routes/purgeRoutes');
 const contentRoutes = require('./routes/contentRoutes');
+const topicPitchRoutes = require('./routes/topicPitchRoutes');
 // const poetryAnalysis = require('./routes/poetry-analysis'); // DEPRECATED - moved to submissionRoutes
 
 // Import security middleware
@@ -143,6 +145,7 @@ app.use('/api/prompts', promptRoutes);
 app.use('/api/images', imageRoutes);
 app.use('/api/purge', purgeRoutes);
 app.use('/api/content', contentRoutes);
+app.use('/api/topic-pitches', topicPitchRoutes);
 app.use('/api/admin', require('./routes/adminRoutes'));
 
 
