@@ -121,6 +121,43 @@ router.post('/attach/:contentId', async (req, res) => {
   }
 });
 
+// DELETE /api/images/delete - Delete image by S3 key (for rich text editor)
+router.delete('/delete', async (req, res) => {
+  try {
+    const { s3Key } = req.body;
+
+    if (!s3Key) {
+      return res.status(400).json({
+        success: false,
+        message: 'S3 key is required'
+      });
+    }
+
+    // Delete using environment-aware service
+    const deleteResult = await ImageService.deleteImage(s3Key);
+
+    if (!deleteResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to delete image',
+        error: deleteResult.error
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Image deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Image delete error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
 // DELETE /api/images/:imageId/content/:contentId - Remove image from content and S3
 router.delete('/:imageId/content/:contentId', async (req, res) => {
   try {

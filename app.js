@@ -78,7 +78,8 @@ app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 app.use((req, res, next) => {
   // Skip all body parsing for file upload routes - let multer handle it
   if (req.url.includes('/upload-profile-image') || 
-      req.url.includes('/api/images/upload')) {
+      req.url.includes('/api/images/upload') ||
+      req.url.includes('/upload-image')) {
     console.log('🔧 Skipping body parsing for file upload route:', req.url);
     return next();
   }
@@ -89,7 +90,8 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   // Skip urlencoded parsing for file upload routes
   if (req.url.includes('/upload-profile-image') || 
-      req.url.includes('/api/images/upload')) {
+      req.url.includes('/api/images/upload') ||
+      req.url.includes('/upload-image')) {
     return next();
   }
   // Apply urlencoded parsing for all other routes
