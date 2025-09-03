@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const Content = require('../models/Content');
 const Submission = require('../models/Submission');
 const { authenticateUser, requireReviewer, requireAdmin } = require('../middleware/auth');
@@ -7,7 +8,7 @@ const { mapSingleTag, filterUnmappedUuids, isUuidTag } = require('../utils/tagMa
 
 const router = express.Router();
 
-// GET /api/content - Consolidated content discovery endpoint
+// GET /api/content - Consolidated content discovery endpoint (REFACTORED for new schema)
 router.get('/', validatePagination, async (req, res) => {
   try {
     const { 
@@ -23,82 +24,137 @@ router.get('/', validatePagination, async (req, res) => {
       userId
     } = req.query;
 
-    // Build query
-    let query = {};
+    // Build aggregation pipeline
+    const pipeline = [];
     
-    // Published filter (defaults to true for backward compatibility)
-    if (published === 'false') {
-      query.isPublished = false;
-    } else {
-      query.isPublished = true;
-    }
-    
-    // Featured filter
-    if (req.query.featured === 'true') {
-      query.isFeatured = true;
-    } else if (req.query.featured === 'false') {
-      query.isFeatured = false;
-    }
-    
-    // Type filter
-    if (type) query.type = type;
+    // Step 1: Match content documents
+    const contentMatch = {};
     
     // Tags filter (multiple tags)
     if (tags) {
       const tagArray = Array.isArray(tags) ? tags : tags.split(',');
-      query.tags = { $in: tagArray.map(t => t.trim().toLowerCase()) };
+      contentMatch.tags = { $in: tagArray.map(t => t.trim().toLowerCase()) };
     }
     
     // Single tag filter
     if (tag) {
-      query.tags = tag.toLowerCase();
+      contentMatch.tags = tag.toLowerCase();
     }
     
-    // Author filter
-    if (author || userId) {
-      query.userId = author || userId;
+    if (Object.keys(contentMatch).length > 0) {
+      pipeline.push({ $match: contentMatch });
     }
-
+    
+    // Step 2: Join with submissions to get publication status and user info
+    pipeline.push({
+      $lookup: {
+        from: 'submissions',
+        localField: 'submissionId',
+        foreignField: '_id',
+        as: 'submission'
+      }
+    });
+    
+    pipeline.push({ $unwind: '$submission' });
+    
+    // Step 3: Filter based on new schema rules
+    const submissionMatch = {};
+    
+    // Published filter (defaults to true for backward compatibility)
+    if (published === 'false') {
+      submissionMatch['submission.status'] = { $ne: 'published' };
+    } else {
+      submissionMatch['submission.status'] = 'published';
+    }
+    
+    // Type filter (from submission, not content)
+    if (type) {
+      submissionMatch['submission.submissionType'] = type;
+    }
+    
+    // Author filter (from submission, not content)
+    if (author || userId) {
+      submissionMatch['submission.userId'] = author || userId;
+    }
+    
+    pipeline.push({ $match: submissionMatch });
+    
+    // Step 4: Join with users for author info
+    pipeline.push({
+      $lookup: {
+        from: 'users',
+        localField: 'submission.userId',
+        foreignField: '_id',
+        as: 'author'
+      }
+    });
+    
+    pipeline.push({ $unwind: '$author' });
+    
+    // Step 5: Featured filter (content-level)
+    if (req.query.featured === 'true') {
+      pipeline.push({ $match: { isFeatured: true } });
+    } else if (req.query.featured === 'false') {
+      pipeline.push({ $match: { isFeatured: false } });
+    }
+    
+    // Step 6: Add derived fields for sorting
+    pipeline.push({
+      $addFields: {
+        publishedAt: '$submission.publishedAt',
+        submissionType: '$submission.submissionType'
+      }
+    });
+    
+    // Step 7: Sort
     const sortOrder = order === 'asc' ? 1 : -1;
     const sortField = sortBy === 'publishedAt' ? 'publishedAt' : 'createdAt';
-
-    const contents = await Content.find(query)
-      .populate('userId', 'username name profileImage')
-      .populate('submissionId', 'title submissionType seo')
-      .sort({ [sortField]: sortOrder })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip))
-      .lean();
-
-    const total = await Content.countDocuments(query);
-
-    // Transform for frontend
-    const transformedContents = contents.map(content => ({
-      _id: content._id,
-      title: content.title,
-      body: content.body,
-      type: content.type,
-      tags: content.tags,
-      publishedAt: content.publishedAt,
-      isFeatured: content.isFeatured,
-      featuredAt: content.featuredAt,
-      slug: content.seo?.slug,
-      author: {
-        _id: content.userId._id,
-        username: content.userId.username,
-        name: content.userId.name,
-        profileImage: content.userId.profileImage
-      },
-      submission: {
-        _id: content.submissionId._id,
-        title: content.submissionId.title,
-        type: content.submissionId.submissionType,
-        slug: content.submissionId.seo?.slug
+    pipeline.push({ $sort: { [sortField]: sortOrder } });
+    
+    // Step 8: Paginate
+    pipeline.push({ $skip: parseInt(skip) });
+    pipeline.push({ $limit: parseInt(limit) });
+    
+    // Step 9: Project final shape
+    pipeline.push({
+      $project: {
+        _id: 1,
+        title: 1,
+        body: 1,
+        tags: 1,
+        footnotes: 1,
+        isFeatured: 1,
+        featuredAt: 1,
+        viewCount: 1,
+        createdAt: 1,
+        publishedAt: 1,
+        submissionType: 1,
+        seo: 1,  // Include full SEO object
+        author: {
+          _id: '$author._id',
+          username: '$author.username',
+          name: '$author.name',
+          profileImage: '$author.profileImage'
+        },
+        submission: {
+          _id: '$submission._id',
+          title: '$submission.title',
+          type: '$submission.submissionType',
+          slug: '$submission.seo.slug'
+        }
       }
-    }));
+    });
+
+    const contents = await Content.aggregate(pipeline);
+    
+    // Get total count for pagination
+    const countPipeline = pipeline.slice(0, -3); // Remove skip, limit, project
+    countPipeline.push({ $count: 'total' });
+    const totalResult = await Content.aggregate(countPipeline);
+    const total = totalResult.length > 0 ? totalResult[0].total : 0;
 
     const response = {
-      contents: transformedContents,
+      contents,
       total,
       pagination: {
         limit: parseInt(limit),
@@ -112,7 +168,7 @@ router.get('/', validatePagination, async (req, res) => {
     // Add metadata based on query parameters
     if (tag) response.tag = tag;
     if (author || userId) {
-      response.author = transformedContents.length > 0 ? transformedContents[0].author : null;
+      response.author = contents.length > 0 ? contents[0].author : null;
     }
     
     res.json(response);
@@ -123,234 +179,69 @@ router.get('/', validatePagination, async (req, res) => {
   }
 });
 
-// LEGACY: GET /api/content/published - Get published content pieces - DEPRECATED
-router.get('/published', validatePagination, async (req, res) => {
-  try {
-    // Forward to consolidated endpoint with published=true
-    const consolidatedQuery = { ...req.query, published: 'true' };
-    req.query = consolidatedQuery;
-    
-    // Call the main content handler logic
-    const { 
-      published,
-      type, 
-      limit = 20, 
-      skip = 0, 
-      sortBy = 'publishedAt', 
-      order = 'desc',
-      tags,
-      tag,
-      author,
-      userId
-    } = req.query;
-
-    let query = { isPublished: true };
-    if (type) query.type = type;
-    if (tags) {
-      const tagArray = Array.isArray(tags) ? tags : tags.split(',');
-      query.tags = { $in: tagArray.map(t => t.trim().toLowerCase()) };
-    }
-
-    const sortOrder = order === 'asc' ? 1 : -1;
-    const sortField = sortBy === 'publishedAt' ? 'publishedAt' : 'createdAt';
-
-    const contents = await Content.find(query)
-      .populate('userId', 'username name profileImage')
-      .populate('submissionId', 'title submissionType seo')
-      .sort({ [sortField]: sortOrder })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip))
-      .lean();
-
-    const total = await Content.countDocuments(query);
-
-    const transformedContents = contents.map(content => ({
-      _id: content._id,
-      title: content.title,
-      body: content.body,
-      type: content.type,
-      tags: content.tags,
-      publishedAt: content.publishedAt,
-      slug: content.seo?.slug,
-      author: {
-        _id: content.userId._id,
-        username: content.userId.username,
-        name: content.userId.name,
-        profileImage: content.userId.profileImage
-      },
-      submission: {
-        _id: content.submissionId._id,
-        title: content.submissionId.title,
-        type: content.submissionId.submissionType,
-        slug: content.submissionId.seo?.slug
-      }
-    }));
-
-    res.json({
-      contents: transformedContents,
-      total,
-      pagination: {
-        limit: parseInt(limit),
-        skip: parseInt(skip),
-        hasMore: (parseInt(skip) + parseInt(limit)) < total,
-        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
-        totalPages: Math.ceil(total / parseInt(limit))
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching published content:', error);
-    res.status(500).json({ message: 'Error fetching published content', error: error.message });
-  }
-});
-
-// LEGACY: GET /api/content/by-tag/:tag - Get content by specific tag - DEPRECATED  
-router.get('/by-tag/:tag', validatePagination, async (req, res) => {
-  try {
-    const { tag } = req.params;
-    const query = { isPublished: true, tags: tag.toLowerCase() };
-    
-    if (req.query.type) query.type = req.query.type;
-    
-    const contents = await Content.find(query)
-      .populate('userId', 'username name profileImage')
-      .populate('submissionId', 'title submissionType seo')
-      .sort({ publishedAt: -1 })
-      .limit(parseInt(req.query.limit) || 20)
-      .skip(parseInt(req.query.skip) || 0)
-      .lean();
-
-    const total = await Content.countDocuments(query);
-
-    const transformedContents = contents.map(content => ({
-      _id: content._id,
-      title: content.title,
-      body: content.body,
-      type: content.type,
-      tags: content.tags,
-      publishedAt: content.publishedAt,
-      slug: content.seo?.slug,
-      author: {
-        _id: content.userId._id,
-        username: content.userId.username,
-        name: content.userId.name,
-        profileImage: content.userId.profileImage
-      },
-      submission: {
-        _id: content.submissionId._id,
-        title: content.submissionId.title,
-        type: content.submissionId.submissionType,
-        slug: content.submissionId.seo?.slug
-      }
-    }));
-
-    res.json({
-      tag,
-      contents: transformedContents,
-      total,
-      pagination: {
-        limit: parseInt(req.query.limit) || 20,
-        skip: parseInt(req.query.skip) || 0,
-        hasMore: (parseInt(req.query.skip) || 0) + transformedContents.length < total
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching content by tag:', error);
-    res.status(500).json({ message: 'Error fetching content by tag', error: error.message });
-  }
-});
-
-// LEGACY: GET /api/content/by-author/:userId - Get published content by author - DEPRECATED
-router.get('/by-author/:userId', validateObjectId('userId'), validatePagination, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const query = { isPublished: true, userId };
-    
-    if (req.query.type) query.type = req.query.type;
-
-    const contents = await Content.find(query)
-      .populate('userId', 'username name profileImage')
-      .populate('submissionId', 'title submissionType seo')
-      .sort({ publishedAt: -1 })
-      .limit(parseInt(req.query.limit) || 20)
-      .skip(parseInt(req.query.skip) || 0)
-      .lean();
-
-    const total = await Content.countDocuments(query);
-    const author = contents.length > 0 ? contents[0].userId : null;
-
-    const transformedContents = contents.map(content => ({
-      _id: content._id,
-      title: content.title,
-      body: content.body,
-      type: content.type,
-      tags: content.tags,
-      publishedAt: content.publishedAt,
-      slug: content.seo?.slug,
-      submission: {
-        _id: content.submissionId._id,
-        title: content.submissionId.title,
-        type: content.submissionId.submissionType,
-        slug: content.submissionId.seo?.slug
-      }
-    }));
-
-    res.json({
-      author,
-      contents: transformedContents,
-      total,
-      pagination: {
-        limit: parseInt(req.query.limit) || 20,
-        skip: parseInt(req.query.skip) || 0,
-        hasMore: (parseInt(req.query.skip) || 0) + transformedContents.length < total
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching content by author:', error);
-    res.status(500).json({ message: 'Error fetching content by author', error: error.message });
-  }
-});
-
-// GET /api/content/id/:contentId - Get individual content by ID
+// GET /api/content/id/:contentId - Get individual content by ID (REFACTORED)
 router.get('/id/:contentId', validateObjectId('contentId'), async (req, res) => {
   try {
     const { contentId } = req.params;
 
-    const content = await Content.findById(contentId)
-      .where('isPublished', true)
-      .populate('userId', 'username name profileImage')
-      .populate('submissionId', 'title submissionType seo');
+    const pipeline = [
+      { $match: { _id: contentId } },
+      {
+        $lookup: {
+          from: 'submissions',
+          localField: 'submissionId',
+          foreignField: '_id',
+          as: 'submission'
+        }
+      },
+      { $unwind: '$submission' },
+      { $match: { 'submission.status': 'published' } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'submission.userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
+      { $unwind: '$author' },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          body: 1,
+          tags: 1,
+          footnotes: 1,
+          isFeatured: 1,
+          featuredAt: 1,
+          viewCount: 1,
+          createdAt: 1,
+          publishedAt: '$submission.publishedAt',
+          submissionType: '$submission.submissionType',
+          seo: 1,
+          author: {
+            _id: '$author._id',
+            username: '$author.username',
+            name: '$author.name',
+            profileImage: '$author.profileImage'
+          },
+          submission: {
+            _id: '$submission._id',
+            title: '$submission.title',
+            type: '$submission.submissionType',
+            slug: '$submission.seo.slug'
+          }
+        }
+      }
+    ];
 
-    if (!content) {
+    const results = await Content.aggregate(pipeline);
+    
+    if (results.length === 0) {
       return res.status(404).json({ message: 'Published content not found' });
     }
 
-    // Transform for frontend (similar to the main content endpoint)
-    const transformedContent = {
-      _id: content._id,
-      title: content.title,
-      body: content.body,
-      type: content.type,
-      tags: content.tags,
-      publishedAt: content.publishedAt,
-      isFeatured: content.isFeatured,
-      featuredAt: content.featuredAt,
-      viewCount: content.viewCount || 0,
-      slug: content.seo?.slug,
-      author: {
-        _id: content.userId._id,
-        username: content.userId.username,
-        name: content.userId.name,
-        profileImage: content.userId.profileImage
-      },
-      submission: {
-        _id: content.submissionId._id,
-        title: content.submissionId.title,
-        type: content.submissionId.submissionType,
-        slug: content.submissionId.seo?.slug
-      }
-    };
-
-    res.json(transformedContent);
+    res.json(results[0]);
 
   } catch (error) {
     console.error('Error fetching content by ID:', error);
@@ -358,19 +249,65 @@ router.get('/id/:contentId', validateObjectId('contentId'), async (req, res) => 
   }
 });
 
-// GET /api/content/:slug - Get individual content by slug  
+// GET /api/content/:slug - Get individual content by slug (REFACTORED)
 router.get('/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
 
-    const content = await Content.findOne({ 
-      'seo.slug': slug,
-      isPublished: true 
-    })
-      .populate('userId', 'username name profileImage')
-      .populate('submissionId', 'title submissionType seo');
+    const pipeline = [
+      { $match: { 'seo.slug': slug } },
+      {
+        $lookup: {
+          from: 'submissions',
+          localField: 'submissionId',
+          foreignField: '_id',
+          as: 'submission'
+        }
+      },
+      { $unwind: '$submission' },
+      { $match: { 'submission.status': 'published' } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'submission.userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
+      { $unwind: '$author' },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          body: 1,
+          tags: 1,
+          footnotes: 1,
+          isFeatured: 1,
+          featuredAt: 1,
+          viewCount: 1,
+          createdAt: 1,
+          publishedAt: '$submission.publishedAt',
+          submissionType: '$submission.submissionType',
+          seo: 1,
+          author: {
+            _id: '$author._id',
+            username: '$author.username',
+            name: '$author.name',
+            profileImage: '$author.profileImage'
+          },
+          submission: {
+            _id: '$submission._id',
+            title: '$submission.title',
+            type: '$submission.submissionType',
+            slug: '$submission.seo.slug'
+          }
+        }
+      }
+    ];
 
-    if (!content) {
+    const results = await Content.aggregate(pipeline);
+    
+    if (results.length === 0) {
       return res.status(404).json({ message: 'Published content not found' });
     }
 
@@ -396,31 +333,10 @@ router.get('/:slug', async (req, res) => {
       });
     };
 
-    // Transform for frontend
-    const transformedContent = {
-      _id: content._id,
-      title: content.title,
-      body: content.body,
-      type: content.type,
-      tags: convertTagsToNames(content.tags),
-      publishedAt: content.publishedAt,
-      createdAt: content.createdAt,
-      seo: content.seo,
-      author: {
-        _id: content.userId._id,
-        username: content.userId.username,
-        name: content.userId.name,
-        profileImage: content.userId.profileImage
-      },
-      submission: {
-        _id: content.submissionId._id,
-        title: content.submissionId.title,
-        type: content.submissionId.submissionType,
-        slug: content.submissionId.seo?.slug
-      }
-    };
+    const content = results[0];
+    content.tags = convertTagsToNames(content.tags);
 
-    res.json({ content: transformedContent });
+    res.json({ content });
 
   } catch (error) {
     console.error('Error fetching content by slug:', error);
@@ -428,7 +344,7 @@ router.get('/:slug', async (req, res) => {
   }
 });
 
-// GET /api/content/tags/popular - Get trending/popular tags
+// GET /api/content/tags/popular - Get trending/popular tags (REFACTORED)
 router.get('/tags/popular', async (req, res) => {
   try {
     // Set cache control headers to prevent caching issues
@@ -440,38 +356,38 @@ router.get('/tags/popular', async (req, res) => {
     
     const { limit = 10 } = req.query;
 
-    // Get popular tags from published submissions
-    const publishedSubmissions = await Submission.find({ status: 'published' })
-      .populate('contentIds')
-      .lean();
-    
-    // Extract all tags from all content pieces
-    const allTags = [];
-    publishedSubmissions.forEach(submission => {
-      if (submission.contentIds && Array.isArray(submission.contentIds)) {
-        submission.contentIds.forEach(content => {
-          if (content && content.tags && Array.isArray(content.tags)) {
-            content.tags.forEach(tag => {
-              if (tag && typeof tag === 'string' && tag.trim()) {
-                allTags.push(tag.trim().toLowerCase());
-              }
-            });
-          }
-        });
+    // Get popular tags using aggregation on published submissions
+    const pipeline = [
+      { $match: { status: 'published' } },
+      {
+        $lookup: {
+          from: 'contents',
+          localField: 'contentIds',
+          foreignField: '_id',
+          as: 'contents'
+        }
+      },
+      { $unwind: '$contents' },
+      { $unwind: '$contents.tags' },
+      { $match: { 'contents.tags': { $ne: null, $ne: '' } } },
+      {
+        $group: {
+          _id: '$contents.tags',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: parseInt(limit) * 2 }, // Get more to filter UUID tags
+      {
+        $project: {
+          _id: 0,
+          tag: '$_id',
+          count: 1
+        }
       }
-    });
-    
-    // Count tag frequencies
-    const tagCounts = {};
-    allTags.forEach(tag => {
-      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-    });
-    
-    // Convert to array and sort by count
-    const popularTags = Object.entries(tagCounts)
-      .map(([tag, count]) => ({ tag, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, parseInt(limit));
+    ];
+
+    const popularTags = await Submission.aggregate(pipeline);
     
     // Filter out UUID tags and keep only readable tags
     const mappedTags = popularTags
@@ -479,53 +395,8 @@ router.get('/tags/popular', async (req, res) => {
         ...tagInfo,
         tag: mapSingleTag(tagInfo.tag)
       }))
-      .filter(tagInfo => tagInfo.tag.length > 0); // Filter out empty tags (UUIDs get filtered to empty strings)
-
-    
-    // Fallback: If no tags found, try getting from any submissions that the frontend is showing
-    if (mappedTags.length === 0) {
-      // This mirrors the query used by the explore page frontend
-      const fallbackSubmissions = await Submission.find({ status: 'published' })
-        .populate('contentIds')
-        .sort({ reviewedAt: -1, createdAt: -1, _id: -1 })
-        .limit(20)
-        .lean();
-      
-      // Try to extract tags from these submissions
-      const fallbackTags = [];
-      fallbackSubmissions.forEach(submission => {
-        // Check if tags are directly on submission
-        if (submission.tags && Array.isArray(submission.tags)) {
-          submission.tags.forEach(tag => {
-            if (tag && typeof tag === 'string' && tag.trim()) {
-              fallbackTags.push(tag.trim().toLowerCase());
-            }
-          });
-        }
-        
-        // Also check content pieces
-        if (submission.contentIds && Array.isArray(submission.contentIds)) {
-          submission.contentIds.forEach(content => {
-            if (content && content.tags && Array.isArray(content.tags)) {
-              content.tags.forEach(tag => {
-                if (tag && typeof tag === 'string' && tag.trim()) {
-                  fallbackTags.push(tag.trim().toLowerCase());
-                }
-              });
-            }
-          });
-        }
-      });
-      
-      if (fallbackTags.length > 0) {
-        // Return the fallback tags
-        const uniqueFallbackTags = [...new Set(fallbackTags)].slice(0, parseInt(limit));
-        
-        return res.json({ 
-          tags: uniqueFallbackTags.filter(tag => !isUuidTag(tag))
-        });
-      }
-    }
+      .filter(tagInfo => tagInfo.tag.length > 0) // Filter out empty tags (UUIDs get filtered to empty strings)
+      .slice(0, parseInt(limit));
     
     res.json({ 
       tags: mappedTags.map(t => t.tag)
@@ -537,128 +408,48 @@ router.get('/tags/popular', async (req, res) => {
   }
 });
 
-// Admin/Reviewer routes for content publishing
-
-// POST /api/content/:contentId/publish - Publish individual content (Admin/Reviewer only)
-router.post('/:contentId/publish', authenticateUser, requireReviewer, validateObjectId('contentId'), async (req, res) => {
-  try {
-    const { contentId } = req.params;
-    const { seo = {} } = req.body;
-
-    // Get content with submission
-    const content = await Content.findById(contentId).populate('submissionId');
-    if (!content) {
-      return res.status(404).json({ message: 'Content not found' });
-    }
-
-    // Check if parent submission is accepted
-    if (content.submissionId.status !== 'accepted') {
-      return res.status(400).json({ 
-        message: 'Can only publish content from accepted submissions' 
-      });
-    }
-
-    // Generate slug if not provided
-    let slug = seo.slug;
-    if (!slug) {
-      slug = content.title
-        .toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, '')
-        .replace(/\s+/g, '-')
-        .replace(/-+/g, '-')
-        .substring(0, 60);
-    }
-
-    // Ensure slug is unique
-    let uniqueSlug = slug;
-    let counter = 1;
-    while (await Content.findOne({ 'seo.slug': uniqueSlug })) {
-      uniqueSlug = `${slug}-${counter}`;
-      counter++;
-    }
-
-    // Update content with publishing data
-    content.isPublished = true;
-    content.publishedAt = new Date();
-    content.seo = {
-      slug: uniqueSlug,
-      metaTitle: seo.metaTitle || content.title,
-      metaDescription: seo.metaDescription || content.body.substring(0, 160)
-    };
-
-    await content.save();
-
-    res.json({
-      success: true,
-      message: 'Content published successfully',
-      content: {
-        _id: content._id,
-        title: content.title,
-        isPublished: content.isPublished,
-        publishedAt: content.publishedAt,
-        slug: content.seo.slug
-      }
-    });
-
-  } catch (error) {
-    console.error('Error publishing content:', error);
-    res.status(500).json({ message: 'Error publishing content', error: error.message });
-  }
-});
-
-// POST /api/content/:contentId/unpublish - Unpublish individual content (Admin only)
-router.post('/:contentId/unpublish', authenticateUser, requireAdmin, validateObjectId('contentId'), async (req, res) => {
-  try {
-    const { contentId } = req.params;
-
-    const content = await Content.findById(contentId);
-    if (!content) {
-      return res.status(404).json({ message: 'Content not found' });
-    }
-
-    if (!content.isPublished) {
-      return res.status(400).json({ message: 'Content is not published' });
-    }
-
-    // Unpublish content
-    content.isPublished = false;
-    content.publishedAt = null;
-    await content.save();
-
-    res.json({
-      success: true,
-      message: 'Content unpublished successfully',
-      content: {
-        _id: content._id,
-        title: content.title,
-        isPublished: content.isPublished
-      }
-    });
-
-  } catch (error) {
-    console.error('Error unpublishing content:', error);
-    res.status(500).json({ message: 'Error unpublishing content', error: error.message });
-  }
-});
-
-// POST /api/content/:contentId/view - Increment view count (no auth required)
+// POST /api/content/:contentId/view - Increment view count (REFACTORED - checks publication via submission)
 router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) => {
   try {
     const { contentId } = req.params;
 
-    const content = await Content.findOneAndUpdate(
-      { _id: contentId, isPublished: true },
+    // Check if content is published via submission status
+    const pipeline = [
+      { $match: { _id: contentId } },
+      {
+        $lookup: {
+          from: 'submissions',
+          localField: 'submissionId',
+          foreignField: '_id',
+          as: 'submission'
+        }
+      },
+      { $unwind: '$submission' },
+      { $match: { 'submission.status': 'published' } }
+    ];
+
+    const publishedContent = await Content.aggregate(pipeline);
+    
+    if (publishedContent.length === 0) {
+      return res.status(404).json({ message: 'Published content not found' });
+    }
+
+    // Increment view count
+    const updatedContent = await Content.findByIdAndUpdate(
+      contentId,
       { $inc: { viewCount: 1 } },
       { new: true, select: 'viewCount' }
     );
 
-    if (!content) {
-      return res.status(404).json({ message: 'Published content not found' });
-    }
+    // Also increment submission view count for trending calculations
+    await Submission.findByIdAndUpdate(
+      publishedContent[0].submission._id,
+      { $inc: { viewCount: 1 } }
+    );
 
     res.json({
       success: true,
-      viewCount: content.viewCount
+      viewCount: updatedContent.viewCount
     });
 
   } catch (error) {
@@ -667,23 +458,35 @@ router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) 
   }
 });
 
-
-// POST /api/content/:contentId/feature - Mark content as featured (Admin/Reviewer only)
+// POST /api/content/:contentId/feature - Mark content as featured (REFACTORED)
 router.post('/:contentId/feature', authenticateUser, requireReviewer, validateObjectId('contentId'), async (req, res) => {
   try {
     const { contentId } = req.params;
 
-    const content = await Content.findById(contentId);
-    if (!content) {
-      return res.status(404).json({ message: 'Content not found' });
-    }
+    // Check if content is published via submission status
+    const pipeline = [
+      { $match: { _id: contentId } },
+      {
+        $lookup: {
+          from: 'submissions',
+          localField: 'submissionId',
+          foreignField: '_id',
+          as: 'submission'
+        }
+      },
+      { $unwind: '$submission' },
+      { $match: { 'submission.status': 'published' } }
+    ];
 
-    // Check if content is published
-    if (!content.isPublished) {
-      return res.status(400).json({ 
-        message: 'Can only feature published content' 
+    const results = await Content.aggregate(pipeline);
+    
+    if (results.length === 0) {
+      return res.status(404).json({ 
+        message: 'Content not found or not published' 
       });
     }
+
+    const content = await Content.findById(contentId);
 
     // Check if already featured
     if (content.isFeatured) {
@@ -744,6 +547,61 @@ router.post('/:contentId/unfeature', authenticateUser, requireReviewer, validate
   } catch (error) {
     console.error('Error unfeaturing content:', error);
     res.status(500).json({ message: 'Error unfeaturing content', error: error.message });
+  }
+});
+
+// LEGACY ENDPOINTS - These should be deprecated after migration
+
+// GET /api/content/published - Get published content pieces - DEPRECATED
+router.get('/published', validatePagination, async (req, res) => {
+  try {
+    console.warn('DEPRECATED: /api/content/published endpoint used. Please use /api/content with published=true');
+    
+    // Forward to main endpoint with published=true
+    req.query.published = 'true';
+    
+    // Use the refactored main handler
+    return router.handle(req, res);
+    
+  } catch (error) {
+    console.error('Error in deprecated published endpoint:', error);
+    res.status(500).json({ message: 'Error fetching published content', error: error.message });
+  }
+});
+
+// GET /api/content/by-tag/:tag - Get content by specific tag - DEPRECATED  
+router.get('/by-tag/:tag', validatePagination, async (req, res) => {
+  try {
+    console.warn('DEPRECATED: /api/content/by-tag/:tag endpoint used. Please use /api/content?tag=');
+    
+    // Forward to main endpoint with tag parameter
+    req.query.tag = req.params.tag;
+    req.query.published = 'true';
+    
+    // Use the refactored main handler
+    return router.handle(req, res);
+    
+  } catch (error) {
+    console.error('Error in deprecated by-tag endpoint:', error);
+    res.status(500).json({ message: 'Error fetching content by tag', error: error.message });
+  }
+});
+
+// GET /api/content/by-author/:userId - Get published content by author - DEPRECATED
+router.get('/by-author/:userId', validateObjectId('userId'), validatePagination, async (req, res) => {
+  try {
+    console.warn('DEPRECATED: /api/content/by-author/:userId endpoint used. Please use /api/content?author=');
+    
+    // Forward to main endpoint with author parameter
+    req.query.author = req.params.userId;
+    req.query.published = 'true';
+    
+    // Use the refactored main handler
+    return router.handle(req, res);
+    
+  } catch (error) {
+    console.error('Error in deprecated by-author endpoint:', error);
+    res.status(500).json({ message: 'Error fetching content by author', error: error.message });
   }
 });
 

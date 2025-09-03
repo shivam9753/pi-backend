@@ -1,7 +1,11 @@
 // routes/prompts.js
 const express = require('express');
 const router = express.Router();
-const { ObjectId } = require('mongodb');
+// UUID validation helper since we use UUIDs instead of ObjectIds
+const isValidUUID = (str) => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
+};
 const { authenticateUser, requireRole } = require('../middleware/auth');
 const {
   COLLECTION_NAME,
@@ -179,14 +183,14 @@ router.get('/:id', async (req, res) => {
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    if (!ObjectId.isValid(req.params.id)) {
+    if (!isValidUUID(req.params.id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid prompt ID'
       });
     }
 
-    const prompt = await collection.findOne({ _id: new ObjectId(req.params.id) });
+    const prompt = await collection.findOne({ _id: req.params.id });
 
     if (!prompt) {
       return res.status(404).json({
@@ -271,7 +275,7 @@ router.put('/:id', authenticateUser, requireRole(['admin']), async (req, res) =>
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    if (!ObjectId.isValid(req.params.id)) {
+    if (!isValidUUID(req.params.id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid prompt ID'
@@ -289,7 +293,7 @@ router.put('/:id', authenticateUser, requireRole(['admin']), async (req, res) =>
     }
 
     // Get existing prompt
-    const existingPrompt = await collection.findOne({ _id: new ObjectId(req.params.id) });
+    const existingPrompt = await collection.findOne({ _id: req.params.id });
     if (!existingPrompt) {
       return res.status(404).json({
         success: false,
@@ -302,12 +306,12 @@ router.put('/:id', authenticateUser, requireRole(['admin']), async (req, res) =>
     
     // Update in database
     await collection.updateOne(
-      { _id: new ObjectId(req.params.id) },
+      { _id: req.params.id },
       { $set: updatedDoc }
     );
 
     // Get updated prompt with user info
-    const updatedPrompt = await collection.findOne({ _id: new ObjectId(req.params.id) });
+    const updatedPrompt = await collection.findOne({ _id: req.params.id });
     const user = await db.collection('users').findOne(
       { _id: updatedPrompt.createdBy },
       { projection: { name: 1, email: 1 } }
@@ -336,14 +340,14 @@ router.delete('/:id', authenticateUser, requireRole(['admin']), async (req, res)
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    if (!ObjectId.isValid(req.params.id)) {
+    if (!isValidUUID(req.params.id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid prompt ID'
       });
     }
 
-    const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) });
+    const result = await collection.deleteOne({ _id: req.params.id });
 
     if (result.deletedCount === 0) {
       return res.status(404).json({
@@ -373,7 +377,7 @@ router.post('/:id/use', async (req, res) => {
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    if (!ObjectId.isValid(req.params.id)) {
+    if (!isValidUUID(req.params.id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid prompt ID'
@@ -381,7 +385,7 @@ router.post('/:id/use', async (req, res) => {
     }
 
     const result = await collection.updateOne(
-      { _id: new ObjectId(req.params.id) },
+      { _id: req.params.id },
       { 
         $inc: { usageCount: 1 },
         $set: { updatedAt: new Date() }
@@ -397,7 +401,7 @@ router.post('/:id/use', async (req, res) => {
 
     // Get updated usage count
     const prompt = await collection.findOne(
-      { _id: new ObjectId(req.params.id) },
+      { _id: req.params.id },
       { projection: { usageCount: 1 } }
     );
 
@@ -456,7 +460,7 @@ router.patch('/:id/toggle-status', authenticateUser, requireRole(['admin']), asy
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    if (!ObjectId.isValid(req.params.id)) {
+    if (!isValidUUID(req.params.id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid prompt ID'
@@ -464,7 +468,7 @@ router.patch('/:id/toggle-status', authenticateUser, requireRole(['admin']), asy
     }
 
     // Get current prompt
-    const prompt = await collection.findOne({ _id: new ObjectId(req.params.id) });
+    const prompt = await collection.findOne({ _id: req.params.id });
     if (!prompt) {
       return res.status(404).json({
         success: false,
@@ -475,7 +479,7 @@ router.patch('/:id/toggle-status', authenticateUser, requireRole(['admin']), asy
     // Toggle status
     const newStatus = !prompt.isActive;
     await collection.updateOne(
-      { _id: new ObjectId(req.params.id) },
+      { _id: req.params.id },
       { 
         $set: { 
           isActive: newStatus,

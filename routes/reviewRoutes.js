@@ -213,9 +213,10 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
     const { action, reviewNotes, rating } = req.body;
     
     // Validate action
-    if (!action || !['approve', 'reject', 'revision'].includes(action)) {
+    const validActions = ['approve', 'reject', 'revision', 'shortlist'];
+    if (!action || !validActions.includes(action)) {
       return res.status(400).json({ 
-        message: 'Invalid action. Must be "approve", "reject", or "revision"' 
+        message: `Invalid action. Must be one of: ${validActions.join(', ')}` 
       });
     }
     
@@ -245,6 +246,12 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
       // Then update submission status with history tracking
       await result.submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user, reviewNotes || 'Submission approved');
       message = 'Submission approved successfully';
+    } else if (action === 'shortlist') {
+      // For shortlist: Create review first, then update status
+      result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
+      // Then update submission status with history tracking
+      await result.submission.changeStatus(SUBMISSION_STATUS.SHORTLISTED, req.user, reviewNotes || 'Submission shortlisted for further review');
+      message = 'Submission shortlisted successfully';
     } else {
       // For reject/revision: Create review first, then update status
       result = await SubmissionService.reviewSubmission(req.params.id, reviewData);

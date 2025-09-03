@@ -157,23 +157,22 @@ class SubmissionService {
   static async getSubmissionWithContent(id) {
     const submission = await Submission.findById(id)
       .populate('userId', 'name username email profileImage')
-      .populate('contentIds')
       .populate('reviewedBy', 'username');
 
     if (!submission) {
       throw new Error('Submission not found');
     }
 
-    // Transform the response to match frontend expectations
-    const submissionObj = submission.toObject();
+    // Use the helper method to manually populate contentIds
+    const populatedSubmission = await Submission.populateContentIds(submission);
     
     // Rename contentIds to contents for frontend compatibility
-    if (submissionObj.contentIds) {
-      submissionObj.contents = submissionObj.contentIds;
-      delete submissionObj.contentIds;
+    if (populatedSubmission.contentIds) {
+      populatedSubmission.contents = populatedSubmission.contentIds;
+      delete populatedSubmission.contentIds;
     }
 
-    return submissionObj;
+    return populatedSubmission;
   }
 
   static async getPublishedSubmissionDetails(id) {
@@ -181,26 +180,28 @@ class SubmissionService {
       _id: id, 
       status: 'published' 
     })
-      .populate('userId', 'name username email profileImage')
-      .populate('contentIds');
+      .populate('userId', 'name username email profileImage');
 
     if (!submission) {
       throw new Error('Published submission not found');
     }
 
+    // Use the helper method to manually populate contentIds
+    const populatedSubmission = await Submission.populateContentIds(submission);
+
     return {
-      _id: submission._id,
-      title: submission.title,
-      description: submission.description,
-      submissionType: submission.submissionType,
-      authorName: submission.userId.username,
-      authorId: submission.userId._id,
-      publishedAt: submission.reviewedAt || submission.createdAt,
-      readingTime: submission.readingTime,
-      imageUrl: submission.imageUrl,
-      excerpt: submission.excerpt,
-      contents: submission.contentIds,
-      createdAt: submission.createdAt
+      _id: populatedSubmission._id,
+      title: populatedSubmission.title,
+      description: populatedSubmission.description,
+      submissionType: populatedSubmission.submissionType,
+      authorName: populatedSubmission.userId.username,
+      authorId: populatedSubmission.userId._id,
+      publishedAt: populatedSubmission.reviewedAt || populatedSubmission.createdAt,
+      readingTime: populatedSubmission.readingTime,
+      imageUrl: populatedSubmission.imageUrl,
+      excerpt: populatedSubmission.excerpt,
+      contents: populatedSubmission.contentIds,
+      createdAt: populatedSubmission.createdAt
     };
   }
 
@@ -468,12 +469,32 @@ class SubmissionService {
 
   static async getUserSubmissions(userId) {
     const submissions = await Submission.find({ userId })
-      .populate('contentIds')
       .sort({ createdAt: -1 })
       .lean();
 
+    // Manually populate contentIds for each submission
+    const populatedSubmissions = await Promise.all(
+      submissions.map(async (submission) => {
+        if (submission.contentIds && submission.contentIds.length > 0) {
+          // Use direct MongoDB query with string IDs
+          const contents = await Submission.db.collection('contents').find({
+            _id: { $in: submission.contentIds }
+          }).toArray();
+          
+          // Create a map for fast lookup and preserve order
+          const contentMap = new Map(contents.map(content => [content._id, content]));
+          const sortedContents = submission.contentIds
+            .map(id => contentMap.get(id))
+            .filter(Boolean);
+          
+          submission.contentIds = sortedContents;
+        }
+        return submission;
+      })
+    );
+
     // Transform for frontend
-    return submissions.map(submission => ({
+    return populatedSubmissions.map(submission => ({
       _id: submission._id,
       title: submission.title,
       submissionType: submission.submissionType,
@@ -539,8 +560,12 @@ class SubmissionService {
       throw new Error('Published submission not found');
     }
     
-    // Debug: Log the actual content data
-    console.log('🔍 DEBUG - Raw submission contentIds:', JSON.stringify(submission.contentIds, null, 2));
+    // Debug content structure
+    if (submission.contentIds && submission.contentIds.length > 0) {
+      console.log('🔍 Service debug - First content keys:', Object.keys(submission.contentIds[0]));
+      console.log('🔍 Service debug - Title:', submission.contentIds[0].title);
+      console.log('🔍 Service debug - Body length:', submission.contentIds[0].body?.length || 0);
+    }
 
     // Helper function to convert UUID tags to readable names using centralized utility
     const convertTagsToNames = (tags) => {
@@ -555,16 +580,21 @@ class SubmissionService {
       submissionType: submission.submissionType,
       authorName: submission.userId.name || submission.userId.username,
       authorId: submission.userId._id,
-      publishedAt: submission.reviewedAt || submission.createdAt,
+      publishedAt: submission.publishedAt || submission.reviewedAt || submission.createdAt,
       readingTime: submission.readingTime,
       imageUrl: submission.imageUrl,
       excerpt: submission.excerpt,
-      contents: submission.contentIds.map(content => ({
+      contents: (submission.contentIds || []).map(content => ({
+        _id: content._id,
         title: content.title,
         body: content.body,
-        type: content.type,
+        type: submission.submissionType, // Use submission type since content no longer has type
         tags: convertTagsToNames(content.tags || []),
-        footnotes: content.footnotes || ''
+        footnotes: content.footnotes || '',
+        seo: content.seo || {},
+        viewCount: content.viewCount || 0,
+        isFeatured: content.isFeatured || false,
+        createdAt: content.createdAt
       })),
       tags: convertTagsToNames(submission.tags || []),
       viewCount: submission.viewCount || 0

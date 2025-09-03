@@ -1,19 +1,23 @@
 const mongoose = require('mongoose');
 
 const reviewSchema = new mongoose.Schema({
+  _id: {
+    type: String,
+    default: () => require('uuid').v4()
+  },
   submissionId: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: 'Submission',
     required: true
   },
   reviewerId: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: 'User',
     required: true
   },
   status: {
     type: String,
-    enum: ['accepted', 'rejected', 'needs_revision'],
+    enum: ['accepted', 'rejected', 'needs_revision', 'shortlisted'],
     required: true
   },
   reviewNotes: {
@@ -27,7 +31,8 @@ const reviewSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  versionKey: false
+  versionKey: false,
+  _id: false // Disable automatic _id since we're defining our own
 });
 
 // Indexes
@@ -62,8 +67,8 @@ reviewSchema.statics.validateReviewData = function(reviewData) {
     errors.push('Reviewer ID is required');
   }
 
-  if (!reviewData.status || !['accepted', 'rejected', 'needs_revision'].includes(reviewData.status)) {
-    errors.push('Status must be "accepted", "rejected", or "needs_revision"');
+  if (!reviewData.status || !['accepted', 'rejected', 'needs_revision', 'shortlisted'].includes(reviewData.status)) {
+    errors.push('Status must be "accepted", "rejected", "needs_revision", or "shortlisted"');
   }
 
   if (reviewData.status === 'rejected' && (!reviewData.reviewNotes || reviewData.reviewNotes.trim().length === 0)) {

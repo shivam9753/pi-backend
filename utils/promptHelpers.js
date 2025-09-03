@@ -48,7 +48,7 @@ const createPromptDoc = (promptData, userId) => {
     picture: promptData.picture || null,
     isActive: promptData.isActive !== undefined ? promptData.isActive : true,
     featured: promptData.featured || false,
-    createdBy: new ObjectId(userId),
+    createdBy: userId,
     usageCount: 0,
     createdAt: now,
     updatedAt: now

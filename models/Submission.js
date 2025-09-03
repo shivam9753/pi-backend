@@ -9,8 +9,12 @@ const {
 } = require('../constants/status.constants');
 
 const submissionSchema = new mongoose.Schema({
+  _id: {
+    type: String,
+    default: () => require('uuid').v4()
+  },
   userId: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: 'User',
     required: true
   },
@@ -25,7 +29,7 @@ const submissionSchema = new mongoose.Schema({
     default: ''
   },
   contentIds: [{
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: 'Content'
   }],
   submissionType: {
@@ -58,12 +62,12 @@ const submissionSchema = new mongoose.Schema({
     type: Date
   },
   reviewedBy: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: 'User'
   },
   // Editorial workflow fields
   assignedTo: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: 'User',
     default: null
   },
@@ -89,7 +93,7 @@ const submissionSchema = new mongoose.Schema({
       default: Date.now
     },
     user: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
       ref: 'User',
       required: true
     },
@@ -167,7 +171,8 @@ const submissionSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  versionKey: false
+  versionKey: false,
+  _id: false // Disable automatic _id since we're defining our own
 });
 
 // Indexes
@@ -401,16 +406,59 @@ submissionSchema.statics.generateSlug = function(title, authorName) {
   return slug;
 };
 
-submissionSchema.statics.findBySlug = function(slug) {
-  return this.findOne({ 
+// Helper method to manually populate contentIds (reusable across methods)
+submissionSchema.statics.populateContentIds = async function(submission) {
+  if (!submission || !submission.contentIds || submission.contentIds.length === 0) {
+    return submission;
+  }
+  
+  // Use direct MongoDB query with string IDs
+  const contents = await this.db.collection('contents').find({
+    _id: { $in: submission.contentIds }
+  }).toArray();
+  
+  // Create a map for fast lookup
+  const contentMap = new Map(contents.map(content => [content._id, content]));
+  
+  // Sort contents to match the order in submission.contentIds
+  const sortedContents = submission.contentIds
+    .map(id => contentMap.get(id))
+    .filter(Boolean); // Remove any null/undefined entries
+  
+  // Convert to plain JavaScript objects to avoid Mongoose serialization issues
+  const plainContents = sortedContents.map(content => ({
+    _id: content._id,
+    title: content.title,
+    body: content.body,
+    type: content.type, // Include type for backward compatibility
+    tags: content.tags || [],
+    footnotes: content.footnotes || '',
+    seo: content.seo || {},
+    viewCount: content.viewCount || 0,
+    isFeatured: content.isFeatured || false,
+    createdAt: content.createdAt,
+    updatedAt: content.updatedAt
+  }));
+  
+  // Create a completely new object to avoid Mongoose interference
+  const submissionObj = submission.toObject ? submission.toObject() : { ...submission };
+  submissionObj.contentIds = plainContents;
+  return submissionObj;
+};
+
+submissionSchema.statics.findBySlug = async function(slug) {
+  // First find the submission
+  const submission = await this.findOne({ 
     'seo.slug': slug, 
     status: 'published' 
-  })
-    .populate('userId', 'name username email profileImage')
-    .populate({
-      path: 'contentIds',
-      select: 'title body type tags footnotes'
-    });
+  }).populate('userId', 'name username email profileImage');
+  
+  if (!submission) {
+    return null;
+  }
+  
+  // Use helper method to populate content
+  return await this.populateContentIds(submission);
 };
 
 

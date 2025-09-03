@@ -26,11 +26,13 @@ const REVIEW_ACTIONS = {
   MOVED_TO_IN_PROGRESS: 'moved_to_in_progress',
   SHORTLISTED: 'shortlisted',
   NEEDS_CHANGES: 'needs_changes',
+  NEEDS_REVISION: 'needs_revision',
   APPROVED: 'approved',
   REJECTED: 'rejected',
   PUBLISHED: 'published',
   ARCHIVED: 'archived',
-  MOVED_TO_DRAFT: 'moved_to_draft'
+  MOVED_TO_DRAFT: 'moved_to_draft',
+  RESUBMITTED: 'resubmitted'
 };
 
 // Submission Types Constants
@@ -58,7 +60,8 @@ const USER_ROLES = {
 const REVIEW_STATUS = {
   ACCEPTED: 'accepted',
   REJECTED: 'rejected',
-  NEEDS_REVISION: 'needs_revision'
+  NEEDS_REVISION: 'needs_revision',
+  SHORTLISTED: 'shortlisted'
 };
 
 // Status Arrays for easier validation
@@ -113,15 +116,17 @@ const STATUS_ACTION_MAP = {
   [SUBMISSION_STATUS.ARCHIVED]: REVIEW_ACTIONS.ARCHIVED,
   [SUBMISSION_STATUS.DRAFT]: REVIEW_ACTIONS.MOVED_TO_DRAFT,
   [SUBMISSION_STATUS.SUBMITTED]: REVIEW_ACTIONS.SUBMITTED,
-  [SUBMISSION_STATUS.NEEDS_REVISION]: REVIEW_ACTIONS.NEEDS_CHANGES, // Map needs_revision to needs_changes action
-  [SUBMISSION_STATUS.PENDING_REVIEW]: REVIEW_ACTIONS.SUBMITTED // Map pending_review to submitted action
+  [SUBMISSION_STATUS.NEEDS_REVISION]: REVIEW_ACTIONS.NEEDS_REVISION, // Map needs_revision status to needs_revision action
+  [SUBMISSION_STATUS.PENDING_REVIEW]: REVIEW_ACTIONS.SUBMITTED, // Map pending_review to submitted action
+  [SUBMISSION_STATUS.RESUBMITTED]: REVIEW_ACTIONS.RESUBMITTED // Map resubmitted status to resubmitted action
 };
 
 // Review Action to Status Mappings (for unified action endpoint)
 const ACTION_STATUS_MAP = {
   approve: SUBMISSION_STATUS.ACCEPTED,
   reject: SUBMISSION_STATUS.REJECTED,
-  revision: SUBMISSION_STATUS.NEEDS_REVISION
+  revision: SUBMISSION_STATUS.NEEDS_REVISION,
+  shortlist: SUBMISSION_STATUS.SHORTLISTED
 };
 
 // Utility functions
@@ -222,7 +227,11 @@ const STATUS_UTILS = {
       [SUBMISSION_STATUS.RESUBMITTED]: [
         SUBMISSION_STATUS.PENDING_REVIEW,
         SUBMISSION_STATUS.IN_PROGRESS,
-        SUBMISSION_STATUS.SHORTLISTED
+        SUBMISSION_STATUS.SHORTLISTED,
+        SUBMISSION_STATUS.APPROVED,
+        SUBMISSION_STATUS.ACCEPTED,
+        SUBMISSION_STATUS.REJECTED,
+        SUBMISSION_STATUS.NEEDS_REVISION
       ],
       [SUBMISSION_STATUS.APPROVED]: [
         SUBMISSION_STATUS.PUBLISHED,

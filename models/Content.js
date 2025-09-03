@@ -1,10 +1,9 @@
 const mongoose = require('mongoose');
 
 const contentSchema = new mongoose.Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+  _id: {
+    type: String,
+    default: () => require('uuid').v4()
   },
   title: {
     type: String,
@@ -14,11 +13,6 @@ const contentSchema = new mongoose.Schema({
   body: {
     type: String,
     required: true
-  },
-  type: {
-    type: String,
-    enum: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion', 'books', 'napoWrimo', 'interview'],
-    default: 'poem'
   },
   tags: [{
     type: String,
@@ -61,16 +55,7 @@ const contentSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  // Content-level publishing
-  isPublished: {
-    type: Boolean,
-    default: false,
-    index: true
-  },
-  publishedAt: {
-    type: Date
-  },
-  // Featured content flag for highlighting
+  // Featured content flag for highlighting (content-level featuring)
   isFeatured: {
     type: Boolean,
     default: false,
@@ -85,7 +70,7 @@ const contentSchema = new mongoose.Schema({
     min: 0
   },
   submissionId: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: 'Submission',
     required: true,
     index: true
@@ -111,28 +96,49 @@ const contentSchema = new mongoose.Schema({
       trim: true
     }
   }
+  
+  // REMOVED REDUNDANT FIELDS:
+  // - userId: Derive from submissionId.userId
+  // - isPublished: Derive from submissionId.status === 'published'
+  // - publishedAt: Use submissionId.publishedAt
+  // - type: Use submissionId.submissionType
+  
 }, {
   timestamps: true,
-  versionKey: false
+  versionKey: false,
+  _id: false // Disable automatic _id since we're defining our own
 });
 
 // Indexes
-contentSchema.index({ userId: 1 });
-contentSchema.index({ type: 1 });
 contentSchema.index({ tags: 1 });
 contentSchema.index({ createdAt: -1 });
-// Publishing indexes
-contentSchema.index({ isPublished: 1 });
-contentSchema.index({ isPublished: 1, publishedAt: -1 });
-contentSchema.index({ isPublished: 1, tags: 1 });
+contentSchema.index({ submissionId: 1 });
 // Featured content indexes
 contentSchema.index({ isFeatured: 1 });
 contentSchema.index({ isFeatured: 1, featuredAt: -1 });
-contentSchema.index({ isPublished: 1, isFeatured: 1 });
-contentSchema.index({ submissionId: 1 });
 // SEO indexes
 contentSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
 
+// Virtual fields to derive publication status from submission
+contentSchema.virtual('isPublished').get(function() {
+  // This will be populated when we do lookups
+  return this.submission?.status === 'published';
+});
+
+contentSchema.virtual('publishedAt').get(function() {
+  // This will be populated when we do lookups
+  return this.submission?.publishedAt;
+});
+
+contentSchema.virtual('type').get(function() {
+  // This will be populated when we do lookups
+  return this.submission?.submissionType;
+});
+
+contentSchema.virtual('userId').get(function() {
+  // This will be populated when we do lookups
+  return this.submission?.userId;
+});
 
 // Static methods
 contentSchema.statics.createMany = async function(contents) {
@@ -144,7 +150,91 @@ contentSchema.statics.deleteByIds = async function(ids) {
 };
 
 contentSchema.statics.findWithUser = function(id) {
-  return this.findById(id).populate('userId', 'username email profileImage');
+  return this.aggregate([
+    { $match: { _id: id } },
+    {
+      $lookup: {
+        from: 'submissions',
+        localField: 'submissionId',
+        foreignField: '_id',
+        as: 'submission'
+      }
+    },
+    { $unwind: '$submission' },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'submission.userId',
+        foreignField: '_id',
+        as: 'user'
+      }
+    },
+    { $unwind: '$user' },
+    {
+      $addFields: {
+        userId: '$user._id'
+      }
+    }
+  ]);
+};
+
+// Get published content with submission status check
+contentSchema.statics.findPublished = function(filters = {}) {
+  return this.aggregate([
+    { $match: filters },
+    {
+      $lookup: {
+        from: 'submissions',
+        localField: 'submissionId',
+        foreignField: '_id',
+        as: 'submission'
+      }
+    },
+    { $unwind: '$submission' },
+    { $match: { 'submission.status': 'published' } },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'submission.userId',
+        foreignField: '_id',
+        as: 'author'
+      }
+    },
+    { $unwind: '$author' },
+    {
+      $addFields: {
+        isPublished: true,
+        publishedAt: '$submission.publishedAt',
+        type: '$submission.submissionType',
+        userId: '$submission.userId'
+      }
+    }
+  ]);
+};
+
+// Get content by user (via submission)
+contentSchema.statics.findByUser = function(userId, filters = {}) {
+  return this.aggregate([
+    { $match: filters },
+    {
+      $lookup: {
+        from: 'submissions',
+        localField: 'submissionId',
+        foreignField: '_id',
+        as: 'submission'
+      }
+    },
+    { $unwind: '$submission' },
+    { $match: { 'submission.userId': userId } },
+    {
+      $addFields: {
+        userId: '$submission.userId',
+        type: '$submission.submissionType',
+        isPublished: { $eq: ['$submission.status', 'published'] },
+        publishedAt: '$submission.publishedAt'
+      }
+    }
+  ]);
 };
 
 contentSchema.statics.calculateWordCount = function(text) {
@@ -154,6 +244,13 @@ contentSchema.statics.calculateWordCount = function(text) {
 
 contentSchema.statics.prepareForStorage = function(contentData) {
   const prepared = { ...contentData };
+  
+  // Remove any legacy fields that shouldn't be stored
+  delete prepared.userId;
+  delete prepared.isPublished;
+  delete prepared.publishedAt;
+  delete prepared.type;
+  
   return prepared;
 };
 
@@ -195,6 +292,53 @@ contentSchema.statics.removeS3Image = async function(contentId, imageId) {
   
   await content.save();
   return removedImage.s3Key; // Return S3 key for deletion
+};
+
+// Utility method to check if content is published (requires submission lookup)
+contentSchema.methods.checkPublishStatus = async function() {
+  const submission = await mongoose.model('Submission').findById(this.submissionId).select('status publishedAt');
+  if (!submission) {
+    throw new Error('Associated submission not found');
+  }
+  
+  return {
+    isPublished: submission.status === 'published',
+    publishedAt: submission.publishedAt
+  };
+};
+
+// Method to get full content with publication info
+contentSchema.methods.toPublicJSON = async function() {
+  const submission = await mongoose.model('Submission')
+    .findById(this.submissionId)
+    .populate('userId', 'username name profileImage')
+    .select('status publishedAt submissionType userId seo');
+    
+  if (!submission) {
+    throw new Error('Associated submission not found');
+  }
+  
+  return {
+    _id: this._id,
+    title: this.title,
+    body: this.body,
+    tags: this.tags,
+    footnotes: this.footnotes,
+    isFeatured: this.isFeatured,
+    featuredAt: this.featuredAt,
+    viewCount: this.viewCount,
+    createdAt: this.createdAt,
+    seo: this.seo,
+    // Derived fields
+    isPublished: submission.status === 'published',
+    publishedAt: submission.publishedAt,
+    type: submission.submissionType,
+    author: submission.userId,
+    submission: {
+      _id: submission._id,
+      slug: submission.seo?.slug
+    }
+  };
 };
 
 module.exports = mongoose.model('Content', contentSchema);

@@ -1,6 +1,10 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
+  _id: {
+    type: String,
+    default: () => require('uuid').v4()
+  },
   email: {
     type: String,
     required: true,
@@ -49,7 +53,8 @@ const userSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  versionKey: false
+  versionKey: false,
+  _id: false // Disable automatic _id since we're defining our own
 });
 
 // Indexes are automatically created by unique: true in schema

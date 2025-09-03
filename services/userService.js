@@ -178,10 +178,16 @@ class UserService {
     const submissions = await Submission.find(query)
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
-      .skip(parseInt(skip))
-      .populate('contentIds', 'title body wordCount footnotes');
+      .skip(parseInt(skip));
 
-    return submissions;
+    // Manually populate contentIds for each submission
+    const populatedSubmissions = await Promise.all(
+      submissions.map(async (submission) => {
+        return await Submission.populateContentIds(submission);
+      })
+    );
+
+    return populatedSubmissions;
   }
 
   static async searchUsers(searchQuery, options = {}) {

@@ -182,8 +182,8 @@ const validateReviewCreation = [
 // Common validation rules
 const validateObjectId = (fieldName) => [
   param(fieldName)
-    .isMongoId()
-    .withMessage(`${fieldName} must be a valid ObjectId`),
+    .isUUID()
+    .withMessage(`${fieldName} must be a valid UUID`),
   handleValidationErrors
 ];
 
