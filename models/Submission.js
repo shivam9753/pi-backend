@@ -9,12 +9,9 @@ const {
 } = require('../constants/status.constants');
 
 const submissionSchema = new mongoose.Schema({
-  _id: {
-    type: String,
-    default: () => require('uuid').v4()
-  },
+  // Note: _id uses default MongoDB ObjectId (not overridden)
   userId: {
-    type: String,
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
   },
