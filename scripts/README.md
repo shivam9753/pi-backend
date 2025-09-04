@@ -1,6 +1,8 @@
 # Database Management Scripts
 
-This directory contains scripts for managing database migrations and cleanup operations.
+This directory contains utility scripts for database maintenance and specific operations.
+
+**Note:** For comprehensive database migrations, use the consolidated `/production-migration-script.js` in the project root.
 
 ## Scripts Overview
 
