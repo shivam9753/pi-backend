@@ -207,9 +207,12 @@ submissionSchema.methods.toggleFeatured = async function() {
 // Method to add history entry
 submissionSchema.methods.addHistoryEntry = async function(action, newStatus, userId, userRole, notes = '') {
   // Ensure we have a user ID for the history entry
-  if (!userId) {
+  if (!userId || (typeof userId === 'string' && userId.trim().length === 0)) {
     throw new Error('User ID is required for history entry');
   }
+  
+  // Convert userId to string for consistency
+  userId = userId.toString();
   
   // If userRole is not provided, get it from the user
   if (!userRole) {
@@ -219,14 +222,15 @@ submissionSchema.methods.addHistoryEntry = async function(action, newStatus, use
       if (userData) {
         userRole = userData.role;
       } else {
-        // If user lookup fails, don't fail the entire operation
-        // This can happen during data migrations or edge cases
-        console.warn(`User not found for ID ${userId} during history entry creation`);
-        userRole = undefined; // Leave undefined for optional field
+        // User not found - this is a critical error for history tracking
+        throw new Error(`User not found for ID ${userId} - cannot create history entry without valid user`);
       }
     } catch (error) {
-      console.error(`Error looking up user role for ID ${userId}:`, error.message);
-      userRole = undefined; // Leave undefined for optional field
+      // Don't swallow errors - proper user validation is required for history integrity
+      if (error.name === 'CastError') {
+        throw new Error(`Invalid user ID format: ${userId}`);
+      }
+      throw new Error(`Failed to lookup user for history entry: ${error.message}`);
     }
   }
   
@@ -238,12 +242,17 @@ submissionSchema.methods.addHistoryEntry = async function(action, newStatus, use
     }
   }
   
+  // Final validation before adding to history
+  if (!userId || typeof userId !== 'string' || userId.trim().length === 0) {
+    throw new Error('Valid user ID is required for history entry');
+  }
+  
   this.history.push({
     action,
     status: newStatus,
-    user: userId,
-    userRole, // Will be undefined if not found, which is allowed since schema has required: false
-    notes,
+    user: userId.trim(),
+    userRole, // Will be set from lookup above
+    notes: notes || '',
     timestamp: new Date()
   });
   this.status = newStatus;
@@ -276,12 +285,26 @@ submissionSchema.methods.changeStatus = async function(newStatus, user, notes = 
   } else if (typeof user === 'string' || (typeof user === 'object' && user.toString)) {
     // Backward compatibility: if just userId is passed, we need to look up the role
     userId = user.toString();
-    const User = require('./User');
-    const userData = await User.findById(userId).select('role');
-    if (!userData) {
-      throw new Error('User not found');
+    
+    // Validate the userId format before attempting database lookup
+    if (!userId || userId.trim().length === 0) {
+      throw new Error('Invalid user ID: User ID cannot be empty');
     }
-    userRole = userData.role;
+    
+    try {
+      const User = require('./User');
+      const userData = await User.findById(userId).select('role');
+      if (!userData) {
+        throw new Error(`User not found for ID: ${userId}`);
+      }
+      userRole = userData.role;
+    } catch (error) {
+      // More specific error handling
+      if (error.name === 'CastError') {
+        throw new Error(`Invalid user ID format: ${userId}`);
+      }
+      throw new Error(`Failed to lookup user: ${error.message}`);
+    }
   } else {
     throw new Error('Invalid user parameter. Expected user object with {_id, role} or userId string');
   }
