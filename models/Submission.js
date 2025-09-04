@@ -9,7 +9,13 @@ const {
 } = require('../constants/status.constants');
 
 const submissionSchema = new mongoose.Schema({
-  // Note: _id uses default MongoDB ObjectId (not overridden)
+  _id: {
+    type: String,
+    default: function() {
+      const { v4: uuidv4 } = require('uuid');
+      return uuidv4();
+    }
+  },
   userId: {
     type: String,
     ref: 'User',
@@ -168,8 +174,8 @@ const submissionSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  versionKey: false
-  // Remove _id: false to allow MongoDB to auto-generate _id
+  versionKey: false,
+  _id: false // Disable automatic _id since we're defining our own string UUID _id
 });
 
 // Indexes

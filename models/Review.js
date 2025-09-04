@@ -3,7 +3,10 @@ const mongoose = require('mongoose');
 const reviewSchema = new mongoose.Schema({
   _id: {
     type: String,
-    default: () => require('uuid').v4()
+    default: function() {
+      const { v4: uuidv4 } = require('uuid');
+      return uuidv4();
+    }
   },
   submissionId: {
     type: String,
@@ -32,7 +35,7 @@ const reviewSchema = new mongoose.Schema({
 }, {
   timestamps: true,
   versionKey: false,
-  _id: false // Disable automatic _id since we're defining our own
+  _id: false // Disable automatic _id since we're defining our own string UUID _id
 });
 
 // Indexes

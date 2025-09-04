@@ -3,7 +3,10 @@ const mongoose = require('mongoose');
 const contentSchema = new mongoose.Schema({
   _id: {
     type: String,
-    default: () => require('uuid').v4()
+    default: function() {
+      const { v4: uuidv4 } = require('uuid');
+      return uuidv4();
+    }
   },
   title: {
     type: String,
@@ -106,7 +109,7 @@ const contentSchema = new mongoose.Schema({
 }, {
   timestamps: true,
   versionKey: false,
-  _id: false // Disable automatic _id since we're defining our own
+  _id: false // Disable automatic _id since we're defining our own string UUID _id
 });
 
 // Indexes
