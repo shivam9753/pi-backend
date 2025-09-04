@@ -73,17 +73,17 @@ class UserService {
     // Get user stats from submissions
     const Submission = require('../models/Submission');
     
-    const [totalSubmissions, acceptedSubmissions, pendingSubmissions, rejectedSubmissions] = await Promise.all([
+    const [totalSubmissions, publishedSubmissions, pendingSubmissions, rejectedSubmissions] = await Promise.all([
       Submission.countDocuments({ userId }),
-      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.ACCEPTED }),
-      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.PENDING_REVIEW }),
+      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.PUBLISHED }),
+      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.PENDING_REVIEW, SUBMISSION_STATUS.IN_PROGRESS, SUBMISSION_STATUS.SHORTLISTED, SUBMISSION_STATUS.SUBMITTED] } }),
       Submission.countDocuments({ userId, status: SUBMISSION_STATUS.REJECTED })
     ]);
 
     const userProfile = user.toPublicJSON();
     userProfile.submissionStats = {
       total: totalSubmissions,
-      accepted: acceptedSubmissions,
+      accepted: publishedSubmissions,
       pending: pendingSubmissions,
       rejected: rejectedSubmissions
     };
