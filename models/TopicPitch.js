@@ -13,8 +13,7 @@ const topicPitchSchema = new mongoose.Schema({
     type: String,
     required: true,
     trim: true,
-    minlength: 10,
-    maxlength: 1000
+    minlength: 10
   },
   contentType: {
     type: String,
@@ -22,8 +21,7 @@ const topicPitchSchema = new mongoose.Schema({
     required: true
   },
   pitchedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    type: String,
     required: true
   },
   pitcherName: {
@@ -41,8 +39,7 @@ const topicPitchSchema = new mongoose.Schema({
     default: 'available'
   },
   claimedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    type: String,
     default: null
   },
   claimedByName: {

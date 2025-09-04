@@ -168,8 +168,8 @@ const submissionSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  versionKey: false,
-  _id: false // Disable automatic _id since we're defining our own
+  versionKey: false
+  // Remove _id: false to allow MongoDB to auto-generate _id
 });
 
 // Indexes

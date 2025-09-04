@@ -22,9 +22,6 @@ const validateTopicPitchCreation = (req, res, next) => {
   if (!description || description.trim().length < 10) {
     errors.push('Description must be at least 10 characters long');
   }
-  if (description && description.length > 1000) {
-    errors.push('Description must be less than 1000 characters');
-  }
   if (!contentType || !['article', 'opinion', 'cinema_essay', 'story'].includes(contentType)) {
     errors.push('Valid content type is required');
   }
@@ -183,7 +180,7 @@ router.post('/', authenticateUser, requirePitchPermission, validateTopicPitchCre
       description: description.trim(),
       contentType,
       pitchedBy: req.user._id,
-      pitcherName: req.user.name || req.user.username,
+      pitcherName: req.user.name || req.user.username.replace(/_\d+$/, '').replace(/_/g, ' ') || req.user.username,
       pitcherRole: req.user.role,
       deadline: deadline ? new Date(deadline) : null,
       priority,
@@ -334,7 +331,7 @@ router.post('/:id/claim', authenticateUser, validateObjectId, async (req, res) =
     // Claim the pitch
     topicPitch.status = 'claimed';
     topicPitch.claimedBy = req.user._id;
-    topicPitch.claimedByName = req.user.name || req.user.username;
+    topicPitch.claimedByName = req.user.name || req.user.username.replace(/_\d+$/, '').replace(/_/g, ' ') || req.user.username;
     topicPitch.claimedAt = new Date();
     await topicPitch.save();
     
