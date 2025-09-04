@@ -11,7 +11,7 @@ const {
 const submissionSchema = new mongoose.Schema({
   // Note: _id uses default MongoDB ObjectId (not overridden)
   userId: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: 'User',
     required: true
   },
