@@ -183,10 +183,12 @@ const validateReviewCreation = [
 const validateObjectId = (fieldName) => [
   param(fieldName)
     .custom((value) => {
-      // Check if it's a valid 24-character hex string (MongoDB ObjectId format)
+      // Check if it's a valid UUID (for submissions) or 24-character hex string (MongoDB ObjectId format)
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const mongoIdRegex = /^[0-9a-fA-F]{24}$/;
-      if (!mongoIdRegex.test(value)) {
-        throw new Error(`${fieldName} must be a valid ObjectId (24-character hex string)`);
+      
+      if (!uuidRegex.test(value) && !mongoIdRegex.test(value)) {
+        throw new Error(`${fieldName} must be a valid UUID or ObjectId`);
       }
       return true;
     }),
