@@ -206,12 +206,27 @@ submissionSchema.methods.toggleFeatured = async function() {
 
 // Method to add history entry
 submissionSchema.methods.addHistoryEntry = async function(action, newStatus, userId, userRole, notes = '') {
+  // Ensure we have a user ID for the history entry
+  if (!userId) {
+    throw new Error('User ID is required for history entry');
+  }
+  
   // If userRole is not provided, get it from the user
   if (!userRole) {
-    const User = require('./User');
-    const userData = await User.findById(userId).select('role');
-    if (userData) {
-      userRole = userData.role;
+    try {
+      const User = require('./User');
+      const userData = await User.findById(userId).select('role');
+      if (userData) {
+        userRole = userData.role;
+      } else {
+        // If user lookup fails, don't fail the entire operation
+        // This can happen during data migrations or edge cases
+        console.warn(`User not found for ID ${userId} during history entry creation`);
+        userRole = undefined; // Leave undefined for optional field
+      }
+    } catch (error) {
+      console.error(`Error looking up user role for ID ${userId}:`, error.message);
+      userRole = undefined; // Leave undefined for optional field
     }
   }
   
@@ -227,7 +242,7 @@ submissionSchema.methods.addHistoryEntry = async function(action, newStatus, use
     action,
     status: newStatus,
     user: userId,
-    userRole,
+    userRole, // Will be undefined if not found, which is allowed since schema has required: false
     notes,
     timestamp: new Date()
   });

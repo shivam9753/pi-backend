@@ -1,7 +1,7 @@
 const { S3Client } = require('@aws-sdk/client-s3');
 const { Upload } = require('@aws-sdk/lib-storage');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { GetObjectCommand, DeleteObjectCommand, CopyObjectCommand } = require('@aws-sdk/client-s3');
 const sharp = require('sharp');
 const { v4: uuidv4 } = require('uuid');
 
@@ -161,6 +161,53 @@ class S3ImageService {
     } catch (error) {
       console.error('Presigned URL Error:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Move image from temporary to permanent storage
+   * @param {string} tempKey - Temporary S3 key (temp/folder/filename)
+   * @param {string} permanentKey - Permanent S3 key (folder/filename)
+   * @returns {Promise<Object>} Move result with new URL
+   */
+  static async moveFromTemp(tempKey, permanentKey) {
+    try {
+      // Copy object to new location
+      const copyCommand = new CopyObjectCommand({
+        Bucket: BUCKET_NAME,
+        CopySource: `${BUCKET_NAME}/${tempKey}`,
+        Key: permanentKey,
+        MetadataDirective: 'COPY'
+      });
+
+      await s3Client.send(copyCommand);
+
+      // Delete original temp file
+      const deleteResult = await this.deleteImage(tempKey);
+      if (!deleteResult.success) {
+        console.warn(`Failed to delete temp file after copy: ${tempKey}`);
+      }
+
+      // Generate new URLs
+      const s3Url = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${permanentKey}`;
+      const cdnUrl = CLOUDFRONT_DOMAIN 
+        ? `https://${CLOUDFRONT_DOMAIN}/${permanentKey}`
+        : s3Url;
+
+      return {
+        success: true,
+        url: cdnUrl || s3Url,
+        s3Url,
+        cdnUrl,
+        permanentKey
+      };
+
+    } catch (error) {
+      console.error('S3 Move Error:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
 

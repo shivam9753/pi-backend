@@ -30,9 +30,10 @@ router.post('/upload', upload.single('image'), async (req, res) => {
       });
     }
 
-    const { submissionType = 'article', alt = '', caption = '' } = req.body;
+    const { submissionType = 'article', alt = '', caption = '', temporary = 'false' } = req.body;
+    const isTemporary = temporary === 'true' || temporary === true;
 
-    // Determine folder based on submission type
+    // Determine folder based on submission type and temporary status
     const folderMap = {
       'article': 'articles',
       'cinema_essay': 'essays', 
@@ -40,7 +41,8 @@ router.post('/upload', upload.single('image'), async (req, res) => {
       'poem': 'poems'
     };
 
-    const folder = folderMap[submissionType] || 'general';
+    const baseFolder = folderMap[submissionType] || 'general';
+    const folder = isTemporary ? `temp/${baseFolder}` : baseFolder;
 
     // Upload using environment-aware service (S3 for prod, local for dev)
     const uploadResult = await ImageService.uploadImage(
@@ -76,7 +78,8 @@ router.post('/upload', upload.single('image'), async (req, res) => {
         compressionRatio: uploadResult.compressionRatio,
         dimensions: uploadResult.dimensions,
         alt: alt,
-        caption: caption
+        caption: caption,
+        temporary: isTemporary
       }
     });
 
@@ -215,6 +218,94 @@ router.get('/content/:contentId', async (req, res) => {
   }
 });
 
+// POST /api/images/move-to-permanent - Move images from temp to permanent folder
+router.post('/move-to-permanent', async (req, res) => {
+  try {
+    const { imageUrls } = req.body;
+    
+    if (!imageUrls || !Array.isArray(imageUrls) || imageUrls.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No images to move',
+        movedImages: []
+      });
+    }
+
+    const movedImages = [];
+    
+    // For each image URL, check if it's a temp image and move it
+    for (const imageUrl of imageUrls) {
+      try {
+        // Extract S3 key from URL (assuming URL structure)
+        const urlParts = imageUrl.split('/');
+        const fileName = urlParts[urlParts.length - 1];
+        
+        // Check if it's a temp image URL
+        if (imageUrl.includes('/temp/')) {
+          // For S3, we need to copy from temp to permanent location
+          if (ImageService.getStorageType && ImageService.getStorageType() === 's3') {
+            const S3ImageService = require('../config/s3').S3ImageService;
+            
+            // Extract temp key from URL
+            const tempKey = imageUrl.split('.amazonaws.com/')[1] || 
+                           imageUrl.split('.cloudfront.net/')[1];
+            
+            if (tempKey && tempKey.startsWith('temp/')) {
+              const permanentKey = tempKey.replace(/^temp\//, '');
+              
+              const copyResult = await S3ImageService.moveFromTemp(tempKey, permanentKey);
+              
+              if (copyResult.success) {
+                movedImages.push({
+                  originalUrl: imageUrl,
+                  newUrl: copyResult.url,
+                  moved: true
+                });
+              }
+            }
+          } else {
+            // For local storage, just note that it would be moved
+            movedImages.push({
+              originalUrl: imageUrl,
+              newUrl: imageUrl.replace('/temp/', '/'),
+              moved: true
+            });
+          }
+        } else {
+          // Already permanent, just keep as is
+          movedImages.push({
+            originalUrl: imageUrl,
+            newUrl: imageUrl,
+            moved: false
+          });
+        }
+      } catch (error) {
+        console.error(`Error moving image ${imageUrl}:`, error);
+        movedImages.push({
+          originalUrl: imageUrl,
+          newUrl: imageUrl,
+          moved: false,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Processed ${imageUrls.length} images`,
+      movedImages
+    });
+
+  } catch (error) {
+    console.error('Move to permanent error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
 
 // Error handling middleware for multer
 router.use((error, req, res, next) => {
@@ -222,7 +313,7 @@ router.use((error, req, res, next) => {
     if (error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
         success: false,
-        message: 'File too large. Maximum size is 10MB.'
+        message: 'File too large. Maximum size is 2MB.'
       });
     }
   }
