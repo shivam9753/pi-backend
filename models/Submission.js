@@ -438,24 +438,57 @@ submissionSchema.statics.populateContentIds = async function(submission) {
   }));
   
   // Create a completely new object to avoid Mongoose interference
-  const submissionObj = submission.toObject ? submission.toObject() : { ...submission };
+  let submissionObj;
+  try {
+    submissionObj = submission.toObject ? submission.toObject() : { ...submission };
+    
+    // Ensure user data is properly handled
+    if (submissionObj.userId && submissionObj.userId._id) {
+      // User is populated, keep as is
+    } else if (submissionObj.userId) {
+      // User ID exists but not populated, that's fine
+    } else {
+      // No user ID at all
+      submissionObj.userId = null;
+    }
+    
+  } catch (error) {
+    console.error('Error converting submission to object:', error);
+    // Fallback: create manual object
+    submissionObj = {
+      _id: submission._id,
+      title: submission.title,
+      userId: submission.userId,
+      status: submission.status,
+      seo: submission.seo,
+      createdAt: submission.createdAt,
+      updatedAt: submission.updatedAt
+    };
+  }
+  
   submissionObj.contentIds = plainContents;
   return submissionObj;
 };
 
 submissionSchema.statics.findBySlug = async function(slug) {
-  // First find the submission
-  const submission = await this.findOne({ 
-    'seo.slug': slug, 
-    status: 'published' 
-  }).populate('userId', 'name username email profileImage');
-  
-  if (!submission) {
-    return null;
+  try {
+    // First find the submission
+    const submission = await this.findOne({ 
+      'seo.slug': slug, 
+      status: 'published' 
+    }).populate('userId', 'name username email profileImage');
+    
+    if (!submission) {
+      return null;
+    }
+    
+    // Use helper method to populate content
+    return await this.populateContentIds(submission);
+    
+  } catch (error) {
+    console.error('Error in findBySlug:', error);
+    throw error;
   }
-  
-  // Use helper method to populate content
-  return await this.populateContentIds(submission);
 };
 
 
