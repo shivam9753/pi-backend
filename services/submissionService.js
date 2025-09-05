@@ -527,10 +527,10 @@ class SubmissionService {
       seoData.slug = Submission.generateSlug(submission.title, submission.userId.username);
     }
 
-    // Ensure slug is unique
+    // Ensure slug is unique (exclude current submission)
     let uniqueSlug = seoData.slug;
     let counter = 1;
-    while (await Submission.findOne({ 'seo.slug': uniqueSlug })) {
+    while (await Submission.findOne({ 'seo.slug': uniqueSlug, _id: { $ne: id } })) {
       uniqueSlug = `${seoData.slug}-${counter}`;
       counter++;
     }
@@ -610,8 +610,8 @@ class SubmissionService {
 
     // If slug is being changed, ensure it's unique
     if (seoData.slug && seoData.slug !== submission.seo?.slug) {
-      const existingSlug = await Submission.findOne({ 'seo.slug': seoData.slug });
-      if (existingSlug && existingSlug._id.toString() !== id) {
+      const existingSlug = await Submission.findOne({ 'seo.slug': seoData.slug, _id: { $ne: id } });
+      if (existingSlug) {
         throw new Error('Slug already exists');
       }
     }
