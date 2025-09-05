@@ -54,6 +54,10 @@ const topicPitchSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  userDeadline: {
+    type: Date,
+    default: null
+  },
   priority: {
     type: String,
     enum: ['low', 'medium', 'high'],

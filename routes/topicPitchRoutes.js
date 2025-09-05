@@ -209,7 +209,7 @@ router.post('/', authenticateUser, requirePitchPermission, validateTopicPitchCre
 });
 
 // GET /api/topic-pitches/:id - Get a specific topic pitch
-router.get('/:id', authenticateUser, validateObjectId, async (req, res) => {
+router.get('/:id', authenticateUser, validateObjectId('id'), async (req, res) => {
   try {
     const topicPitch = await TopicPitch.findById(req.params.id)
       .populate('pitchedBy', 'username name role bio')
@@ -239,7 +239,7 @@ router.get('/:id', authenticateUser, validateObjectId, async (req, res) => {
 });
 
 // PUT /api/topic-pitches/:id - Update a topic pitch (only by pitcher or admin)
-router.put('/:id', authenticateUser, validateObjectId, async (req, res) => {
+router.put('/:id', authenticateUser, validateObjectId('id'), async (req, res) => {
   try {
     const topicPitch = await TopicPitch.findById(req.params.id);
     
@@ -302,7 +302,7 @@ router.put('/:id', authenticateUser, validateObjectId, async (req, res) => {
 });
 
 // POST /api/topic-pitches/:id/claim - Claim a topic pitch
-router.post('/:id/claim', authenticateUser, validateObjectId, async (req, res) => {
+router.post('/:id/claim', authenticateUser, validateObjectId('id'), async (req, res) => {
   try {
     const topicPitch = await TopicPitch.findById(req.params.id);
     
@@ -329,10 +329,18 @@ router.post('/:id/claim', authenticateUser, validateObjectId, async (req, res) =
     }
 
     // Claim the pitch
+    const { userDeadline } = req.body;
+    
     topicPitch.status = 'claimed';
     topicPitch.claimedBy = req.user._id;
     topicPitch.claimedByName = req.user.name || req.user.username.replace(/_\d+$/, '').replace(/_/g, ' ') || req.user.username;
     topicPitch.claimedAt = new Date();
+    
+    // Set user deadline if provided
+    if (userDeadline) {
+      topicPitch.userDeadline = new Date(userDeadline);
+    }
+    
     await topicPitch.save();
     
     await topicPitch.populate('pitchedBy', 'username name role');
@@ -354,8 +362,56 @@ router.post('/:id/claim', authenticateUser, validateObjectId, async (req, res) =
   }
 });
 
-// POST /api/topic-pitches/:id/release - Release a claimed topic pitch
-router.post('/:id/release', authenticateUser, validateObjectId, async (req, res) => {
+// POST /api/topic-pitches/:id/unclaim - Unclaim a topic pitch
+router.post('/:id/unclaim', authenticateUser, validateObjectId('id'), async (req, res) => {
+  try {
+    const topicPitch = await TopicPitch.findById(req.params.id);
+    
+    if (!topicPitch) {
+      return res.status(404).json({
+        success: false,
+        message: 'Topic pitch not found'
+      });
+    }
+
+    // Only the claimer can unclaim (unless admin)
+    if (topicPitch.claimedBy && 
+        topicPitch.claimedBy.toString() !== req.user._id.toString() && 
+        req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only unclaim topics you have claimed'
+      });
+    }
+
+    // Reset claim fields
+    topicPitch.status = 'available';
+    topicPitch.claimedBy = null;
+    topicPitch.claimedByName = null;
+    topicPitch.claimedAt = null;
+    topicPitch.userDeadline = null;
+    
+    await topicPitch.save();
+    await topicPitch.populate('pitchedBy', 'username name role');
+
+    res.json({
+      success: true,
+      message: 'Topic pitch unclaimed successfully',
+      topic: topicPitch
+    });
+
+  } catch (error) {
+    console.error('Error unclaiming topic pitch:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to unclaim topic pitch',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+// POST /api/topic-pitches/:id/release - Release a claimed topic pitch (kept for backward compatibility)
+router.post('/:id/release', authenticateUser, validateObjectId('id'), async (req, res) => {
   try {
     const topicPitch = await TopicPitch.findById(req.params.id);
     
@@ -396,7 +452,7 @@ router.post('/:id/release', authenticateUser, validateObjectId, async (req, res)
 });
 
 // DELETE /api/topic-pitches/:id - Delete a topic pitch (only pitcher or admin)
-router.delete('/:id', authenticateUser, validateObjectId, async (req, res) => {
+router.delete('/:id', authenticateUser, validateObjectId('id'), async (req, res) => {
   try {
     const topicPitch = await TopicPitch.findById(req.params.id);
     
