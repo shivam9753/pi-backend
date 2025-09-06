@@ -1580,5 +1580,162 @@ router.get('/:id/stats', validateObjectId('id'), async (req, res) => {
   }
 });
 
+// GET /api/submissions/analytics/overview - Get overall analytics data
+router.get('/analytics/overview', requireReviewer, async (req, res) => {
+  try {
+    // Get total counts and aggregate statistics
+    const totalSubmissions = await Submission.countDocuments({ status: 'published' });
+    
+    // Get total views across all published submissions
+    const viewStats = await Submission.aggregate([
+      { $match: { status: 'published' } },
+      {
+        $group: {
+          _id: null,
+          totalViews: { $sum: '$viewCount' },
+          totalRecentViews: { $sum: '$recentViews' },
+          avgViews: { $avg: '$viewCount' }
+        }
+      }
+    ]);
+
+    // Get post type statistics
+    const typeStats = await Submission.aggregate([
+      { $match: { status: 'published' } },
+      {
+        $group: {
+          _id: '$submissionType',
+          count: { $sum: 1 },
+          totalViews: { $sum: '$viewCount' },
+          avgViews: { $avg: '$viewCount' }
+        }
+      },
+      { $sort: { totalViews: -1 } }
+    ]);
+
+    // Get top viewed posts
+    const topPosts = await Submission.find({ status: 'published' })
+      .populate('userId', 'name username')
+      .select('title viewCount recentViews submissionType publishedAt seo')
+      .sort({ viewCount: -1 })
+      .limit(10);
+
+    // Get recent trending posts (last 7 days activity)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    const trending = await Submission.find({ 
+      status: 'published',
+      windowStartTime: { $gte: sevenDaysAgo },
+      recentViews: { $gt: 0 }
+    })
+      .populate('userId', 'name username')
+      .select('title viewCount recentViews submissionType publishedAt seo')
+      .sort({ recentViews: -1 })
+      .limit(10);
+
+    // Calculate trending scores for each post
+    const trendingWithScores = trending.map(post => ({
+      ...post.toObject(),
+      trendingScore: post.getTrendingScore ? post.getTrendingScore() : 0
+    }));
+
+    // Get recent activity data (posts published in last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const recentActivity = await Submission.aggregate([
+      { 
+        $match: { 
+          status: 'published',
+          publishedAt: { $gte: thirtyDaysAgo }
+        }
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$publishedAt" } },
+          posts: { $sum: 1 },
+          views: { $sum: '$viewCount' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const stats = viewStats[0] || { totalViews: 0, totalRecentViews: 0, avgViews: 0 };
+
+    res.json({
+      success: true,
+      overview: {
+        totalPosts: totalSubmissions,
+        totalViews: stats.totalViews,
+        totalRecentViews: stats.totalRecentViews,
+        avgViewsPerPost: Math.round(stats.avgViews || 0),
+        postTypeStats: typeStats,
+        topPosts: topPosts,
+        trendingPosts: trendingWithScores,
+        recentActivity: recentActivity
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching analytics overview:', error);
+    res.status(500).json({ message: 'Error fetching analytics overview', error: error.message });
+  }
+});
+
+// GET /api/submissions/analytics/performance - Get performance analytics
+router.get('/analytics/performance', requireReviewer, async (req, res) => {
+  try {
+    const { timeframe = '30' } = req.query;
+    const days = parseInt(timeframe);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    // Get view performance data
+    const performanceData = await Submission.aggregate([
+      { $match: { status: 'published', publishedAt: { $gte: startDate } } },
+      {
+        $project: {
+          title: 1,
+          viewCount: 1,
+          recentViews: 1,
+          submissionType: 1,
+          publishedAt: 1,
+          viewsPerDay: {
+            $divide: [
+              '$viewCount',
+              {
+                $max: [
+                  1,
+                  {
+                    $divide: [
+                      { $subtract: [new Date(), '$publishedAt'] },
+                      1000 * 60 * 60 * 24
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      { $sort: { viewsPerDay: -1 } },
+      { $limit: 20 }
+    ]);
+
+    res.json({
+      success: true,
+      performance: {
+        timeframe: `${days} days`,
+        topPerformers: performanceData
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching performance analytics:', error);
+    res.status(500).json({ message: 'Error fetching performance analytics', error: error.message });
+  }
+});
+
 
 module.exports = router;

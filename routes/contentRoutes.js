@@ -21,7 +21,8 @@ router.get('/', validatePagination, async (req, res) => {
       tags,
       tag,
       author,
-      userId
+      userId,
+      search
     } = req.query;
 
     // Build aggregation pipeline
@@ -98,7 +99,22 @@ router.get('/', validatePagination, async (req, res) => {
       pipeline.push({ $match: { isFeatured: false } });
     }
     
-    // Step 6: Add derived fields for sorting
+    // Step 6: Search filter (title and author name)
+    if (search && search.trim()) {
+      const searchRegex = { $regex: search.trim(), $options: 'i' };
+      pipeline.push({
+        $match: {
+          $or: [
+            { title: searchRegex },
+            { 'author.name': searchRegex },
+            { 'author.username': searchRegex },
+            { 'submission.title': searchRegex }
+          ]
+        }
+      });
+    }
+    
+    // Step 7: Add derived fields for sorting
     pipeline.push({
       $addFields: {
         publishedAt: '$submission.publishedAt',
@@ -106,16 +122,23 @@ router.get('/', validatePagination, async (req, res) => {
       }
     });
     
-    // Step 7: Sort
+    // Step 8: Sort
     const sortOrder = order === 'asc' ? 1 : -1;
-    const sortField = sortBy === 'publishedAt' ? 'publishedAt' : 'createdAt';
+    let sortField;
+    if (sortBy === 'publishedAt') {
+      sortField = 'publishedAt';
+    } else if (sortBy === 'featuredAt') {
+      sortField = 'featuredAt';
+    } else {
+      sortField = 'createdAt';
+    }
     pipeline.push({ $sort: { [sortField]: sortOrder } });
     
-    // Step 8: Paginate
+    // Step 9: Paginate
     pipeline.push({ $skip: parseInt(skip) });
     pipeline.push({ $limit: parseInt(limit) });
     
-    // Step 9: Project final shape
+    // Step 10: Project final shape
     pipeline.push({
       $project: {
         _id: 1,
