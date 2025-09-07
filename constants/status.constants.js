@@ -97,7 +97,7 @@ const STATUS_ARRAYS = {
     USER_ROLES.ADMIN
   ],
   
-  CURATOR_ROLES: [
+  WRITER_ROLES: [
     USER_ROLES.WRITER,
     USER_ROLES.REVIEWER,
     USER_ROLES.ADMIN
@@ -160,10 +160,10 @@ const STATUS_UTILS = {
   },
 
   /**
-   * Check if user role can curate
+   * Check if user role can write/curate
    */
-  canCurate: (role) => {
-    return STATUS_ARRAYS.CURATOR_ROLES.includes(role);
+  canWrite: (role) => {
+    return STATUS_ARRAYS.WRITER_ROLES.includes(role);
   },
 
   /**
