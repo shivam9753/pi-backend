@@ -195,6 +195,8 @@ class UserService {
     
     const query = {
       $or: [
+        { name: { $regex: searchQuery, $options: 'i' } },
+        { email: { $regex: searchQuery, $options: 'i' } },
         { username: { $regex: searchQuery, $options: 'i' } },
         { bio: { $regex: searchQuery, $options: 'i' } }
       ]

@@ -135,11 +135,32 @@ router.get('/', validatePagination, async (req, res) => {
     
     // Search filtering
     if (search) {
-      query.$or = [
+      // First, find users whose name or username matches the search term
+      const User = require('../models/User');
+      const matchingUsers = await User.find({
+        $or: [
+          { name: { $regex: search, $options: 'i' } },
+          { username: { $regex: search, $options: 'i' } }
+        ]
+      }).select('_id').lean();
+      
+      const matchingUserIds = matchingUsers.map(user => user._id);
+      console.log(`🔍 Search term: "${search}", found ${matchingUsers.length} matching users:`, matchingUserIds);
+      
+      // Build search query that includes title, description, excerpt, and user matches
+      const searchConditions = [
         { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } },
         { excerpt: { $regex: search, $options: 'i' } }
       ];
+      
+      // If we found matching users, add them to search conditions
+      if (matchingUserIds.length > 0) {
+        searchConditions.push({ userId: { $in: matchingUserIds } });
+      }
+      
+      query.$or = searchConditions;
+      console.log('🔍 Final search query:', JSON.stringify(query, null, 2));
     }
     
     // Tag filtering - need to find submissions through content collection
