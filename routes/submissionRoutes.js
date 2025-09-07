@@ -3,7 +3,7 @@ const multer = require('multer');
 const Submission = require('../models/Submission');
 const Content = require('../models/Content');
 const SubmissionService = require('../services/submissionService');
-const { authenticateUser, requireReviewer, requireCurator, requireAdmin } = require('../middleware/auth');
+const { authenticateUser, requireReviewer, requireWriter, requireAdmin } = require('../middleware/auth');
 const { 
   validateSubmissionCreation, 
   validateSubmissionUpdate, 
@@ -43,9 +43,9 @@ router.get('/:id/history', authenticateUser, validateObjectId('id'), async (req,
       return res.status(404).json({ message: 'Submission not found' });
     }
     
-    // Check permissions - only curator/reviewer/admin or submission owner can view
+    // Check permissions - only writer/reviewer/admin or submission owner can view
     const isOwner = submission.userId._id.toString() === req.user._id.toString();
-    const isReviewer = ['curator', 'reviewer', 'admin'].includes(req.user.role);
+    const isReviewer = ['writer', 'reviewer', 'admin'].includes(req.user.role);
     
     if (!isOwner && !isReviewer) {
       return res.status(403).json({ message: 'Access denied' });
@@ -97,7 +97,8 @@ router.get('/', validatePagination, async (req, res) => {
       featured,
       includeTypes,
       search,
-      tag
+      tag,
+      isTopicSubmission
     } = req.query;
     
     // Build query based on parameters
@@ -124,6 +125,13 @@ router.get('/', validatePagination, async (req, res) => {
     // Featured filtering
     if (featured === 'true') query.isFeatured = true;
     if (featured === 'false') query.isFeatured = false;
+    
+    // Topic submission filtering
+    if (isTopicSubmission === 'true') {
+      query.topicPitchId = { $ne: null };
+    } else if (isTopicSubmission === 'false') {
+      query.topicPitchId = null;
+    }
     
     // Search filtering
     if (search) {
@@ -493,9 +501,9 @@ router.get('/:id/contents', authenticateUser, validateObjectId('id'), async (req
   try {
     const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
     
-    // Check if user owns this submission or has curator/reviewer/admin rights
+    // Check if user owns this submission or has writer/reviewer/admin rights
     const isOwner = submission.userId._id.toString() === req.user._id.toString();
-    const isReviewer = req.user.role === 'curator' || req.user.role === 'reviewer' || req.user.role === 'admin';
+    const isReviewer = req.user.role === 'writer' || req.user.role === 'reviewer' || req.user.role === 'admin';
     
     if (!isOwner && !isReviewer) {
       return res.status(403).json({ message: 'Access denied. You can only view your own submissions.' });
@@ -707,7 +715,7 @@ router.put('/:id', authenticateUser, requireReviewer, validateObjectId('id'), va
 });
 
 // PATCH /api/submissions/:id/status - Update submission status
-router.patch('/:id/status', authenticateUser, requireCurator, validateObjectId('id'), validateStatusUpdate, async (req, res) => {
+router.patch('/:id/status', authenticateUser, requireWriter, validateObjectId('id'), validateStatusUpdate, async (req, res) => {
   try {
     
     // Get submission before updating to check for images
@@ -1182,7 +1190,7 @@ router.get('/drafts/my', authenticateUser, async (req, res) => {
 // POST /api/submissions/drafts - Create or update draft
 router.post('/drafts', authenticateUser, async (req, res) => {
   try {
-    const { title, description, submissionType, contents, draftId } = req.body;
+    const { title, description, submissionType, contents, draftId, topicPitchId } = req.body;
     
     if (!submissionType) {
       return res.status(400).json({ message: 'Submission type is required' });
@@ -1225,7 +1233,8 @@ router.post('/drafts', authenticateUser, async (req, res) => {
         submissionType,
         contentIds: createdContents.map(c => c._id),
         readingTime,
-        excerpt
+        excerpt,
+        ...(topicPitchId && { topicPitchId })
       });
     } else {
       // Create new draft
@@ -1234,7 +1243,8 @@ router.post('/drafts', authenticateUser, async (req, res) => {
         title,
         description,
         submissionType,
-        contentIds: []
+        contentIds: [],
+        ...(topicPitchId && { topicPitchId })
       };
       
       draft = await Submission.createDraft(submissionData);

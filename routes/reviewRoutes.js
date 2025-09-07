@@ -2,7 +2,7 @@ const express = require('express');
 const Submission = require('../models/Submission');
 const Review = require('../models/Review');
 const SubmissionService = require('../services/submissionService');
-const { authenticateUser, requireReviewer, requireCurator, requireAdmin } = require('../middleware/auth');
+const { authenticateUser, requireReviewer, requireWriter, requireAdmin } = require('../middleware/auth');
 const { 
   validateReviewCreation,
   validateObjectId,
@@ -23,7 +23,7 @@ router.use(authenticateUser);
 
 // DEPRECATED: Use /api/submissions?status=pending_review instead
 // GET /api/reviews/pending - Get submissions pending review and in progress with advanced filtering
-router.get('/pending', requireCurator, validatePagination, async (req, res) => {
+router.get('/pending', requireWriter, validatePagination, async (req, res) => {
   try {
     const { 
       limit = 20, 
@@ -167,7 +167,7 @@ router.get('/pending', requireCurator, validatePagination, async (req, res) => {
 });
 
 // GET /api/reviews/accepted - Get accepted submissions ready for publication
-router.get('/accepted', requireCurator, validatePagination, async (req, res) => {
+router.get('/accepted', requireWriter, validatePagination, async (req, res) => {
   try {
     const result = await SubmissionService.getAcceptedSubmissions(req.query);
     res.json(result);
@@ -299,7 +299,7 @@ router.get('/my-reviews', requireReviewer, validatePagination, async (req, res) 
 });
 
 // GET /api/reviews/submission/:id - Get reviews for a specific submission
-router.get('/submission/:id', requireCurator, validateObjectId('id'), async (req, res) => {
+router.get('/submission/:id', requireWriter, validateObjectId('id'), async (req, res) => {
   try {
     const review = await Review.findBySubmissionId(req.params.id);
     
@@ -314,7 +314,7 @@ router.get('/submission/:id', requireCurator, validateObjectId('id'), async (req
 });
 
 // GET /api/reviews/stats - Get review statistics
-router.get('/stats', requireCurator, async (req, res) => {
+router.get('/stats', requireWriter, async (req, res) => {
   try {
     const { reviewerId } = req.query;
     

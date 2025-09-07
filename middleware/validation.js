@@ -102,6 +102,11 @@ const validateSubmissionCreation = [
     .trim()
     .isLength({ max: 2000 })
     .withMessage('Footnotes must be less than 2000 characters'),
+  body('topicPitchId')
+    .optional()
+    .isString()
+    .trim()
+    .withMessage('Topic pitch ID must be a valid string'),
   handleValidationErrors
 ];
 

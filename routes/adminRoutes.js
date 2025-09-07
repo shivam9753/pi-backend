@@ -46,7 +46,7 @@ router.post('/users', async (req, res) => {
     }
 
     // Validate role if provided
-    const validRoles = ['user', 'curator', 'reviewer', 'admin'];
+    const validRoles = ['user', 'writer', 'reviewer', 'admin'];
     const userRole = role && validRoles.includes(role) ? role : 'user';
 
     // Check if user already exists

@@ -56,7 +56,7 @@ const requireRole = (allowedRoles) => {
   };
 };
 
-const requireCurator = requireRole(['admin', 'reviewer', 'curator']);
+const requireWriter = requireRole(['admin', 'reviewer', 'writer']);
 const requireReviewer = requireRole(['admin', 'reviewer']);
 const requireAdmin = requireRole(['admin']);
 
@@ -75,7 +75,7 @@ const verifyToken = (token) => {
 module.exports = {
   authenticateUser,
   requireRole,
-  requireCurator,
+  requireWriter,
   requireReviewer,
   requireAdmin,
   generateToken,

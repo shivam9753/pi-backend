@@ -256,7 +256,7 @@ class UserService {
       throw new Error('User not found');
     }
 
-    const allowedRoles = ['user', 'reviewer', 'admin', 'curator'];
+    const allowedRoles = ['user', 'reviewer', 'admin', 'writer'];
     if (!allowedRoles.includes(newRole)) {
       throw new Error('Invalid role');
     }

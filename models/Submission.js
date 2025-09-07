@@ -156,6 +156,13 @@ const submissionSchema = new mongoose.Schema({
     type: Date,
     index: true
   },
+  // Topic pitch reference for submissions created from topic pitches
+  topicPitchId: {
+    type: String,
+    ref: 'TopicPitch',
+    default: null,
+    index: true
+  },
   viewCount: {
     type: Number,
     default: 0,

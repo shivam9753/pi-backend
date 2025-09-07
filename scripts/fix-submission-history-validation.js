@@ -10,22 +10,44 @@
  * 4. Reports on data inconsistencies
  * 
  * Usage:
- * node scripts/fix-submission-history-validation.js [--dry-run] [--verbose]
+ * node scripts/fix-submission-history-validation.js [--dry-run] [--verbose] [--env=production] [--mongo-uri=connection-string]
  */
 
-require('dotenv').config();
+// Parse command line arguments
+const args = process.argv.slice(2);
+const isDryRun = args.includes('--dry-run');
+const isVerbose = args.includes('--verbose');
+
+// Check for custom environment or mongo URI
+const envArg = args.find(arg => arg.startsWith('--env='));
+const mongoUriArg = args.find(arg => arg.startsWith('--mongo-uri='));
+
+if (envArg) {
+  const envFile = envArg.split('=')[1];
+  require('dotenv').config({ path: `.env.${envFile}` });
+  console.log(`🔧 Loading environment from .env.${envFile}`);
+} else {
+  require('dotenv').config();
+}
+
 const mongoose = require('mongoose');
 const Submission = require('../models/Submission');
 const User = require('../models/User');
 
-const isDryRun = process.argv.includes('--dry-run');
-const isVerbose = process.argv.includes('--verbose');
-
 async function connectDB() {
   try {
-    const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
-    if (!mongoUri) {
-      throw new Error('MONGODB_URI or MONGO_URI environment variable is required');
+    // Use custom mongo URI from command line, or fallback to environment variables
+    let mongoUri;
+    
+    if (mongoUriArg) {
+      mongoUri = mongoUriArg.split('=')[1];
+      console.log('🔧 Using custom MongoDB URI from command line');
+    } else {
+      mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI || process.env.ATLAS_URL;
+    }
+    
+    if (!mongoUri || mongoUri === 'your-production-mongodb-connection-string') {
+      throw new Error('MONGODB_URI, MONGO_URI, or ATLAS_URL environment variable is required, or provide --mongo-uri=connection-string');
     }
     
     await mongoose.connect(mongoUri, {

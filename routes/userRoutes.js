@@ -36,8 +36,8 @@ router.post('/admin/users', authenticateUser, requireAdmin, async (req, res) => 
     }
     
     // Validate role
-    if (!['user', 'reviewer', 'admin', 'curator'].includes(role)) {
-      return res.status(400).json({ message: 'Invalid role. Must be user, reviewer, or admin' });
+    if (!['user', 'reviewer', 'admin', 'writer'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role. Must be user, writer, reviewer, or admin' });
     }
     
     // Check if user already exists
@@ -274,9 +274,9 @@ router.patch('/:id/role', authenticateUser, requireAdmin, validateObjectId('id')
   try {
     const { role } = req.body;
     
-    if (!role || !['user', 'reviewer', 'admin', 'curator'].includes(role)) {
+    if (!role || !['user', 'reviewer', 'admin', 'writer'].includes(role)) {
       return res.status(400).json({ 
-        message: 'Invalid role. Must be one of: user, reviewer, admin, curator' 
+        message: 'Invalid role. Must be one of: user, reviewer, admin, writer' 
       });
     }
     

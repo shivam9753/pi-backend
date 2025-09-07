@@ -13,13 +13,13 @@ class WorkflowService {
         'needs_changes': ['draft', 'submitted']
       },
       
-      // Curator transitions
-      curator: {
+      // Writer transitions
+      writer: {
         'submitted': ['in_progress'],
         'in_progress': ['shortlisted', 'needs_changes', 'rejected']
       },
       
-      // Reviewer transitions (includes all curator powers)
+      // Reviewer transitions (includes all writer powers)
       reviewer: {
         'submitted': ['in_progress'],
         'in_progress': ['shortlisted', 'needs_changes', 'rejected', 'approved'],
@@ -120,8 +120,8 @@ class WorkflowService {
         // Authors only see their own submissions
         return { userId: userId };
       
-      case 'curator':
-        // Curators see submitted and in_progress submissions
+      case 'writer':
+        // Writers see submitted and in_progress submissions
         return { 
           status: { $in: ['submitted', 'in_progress'] }
         };
@@ -172,7 +172,7 @@ class WorkflowService {
     }
 
     // Editorial staff actions
-    if (['curator', 'reviewer', 'admin'].includes(userRole)) {
+    if (['writer', 'reviewer', 'admin'].includes(userRole)) {
       
       // Move to In Progress (only if not already assigned)
       if (currentStatus === 'submitted' && !submission.assignedTo) {
@@ -181,7 +181,7 @@ class WorkflowService {
 
       // Actions available when assigned to this user
       if (currentStatus === 'in_progress' && isAssignedToUser) {
-        if (userRole === 'curator') {
+        if (userRole === 'writer') {
           actions.push(
             { action: 'shortlist', label: 'Shortlist', targetStatus: 'shortlisted' },
             { action: 'needs_changes', label: 'Needs Changes', targetStatus: 'needs_changes' },

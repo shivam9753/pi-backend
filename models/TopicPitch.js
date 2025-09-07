@@ -30,7 +30,7 @@ const topicPitchSchema = new mongoose.Schema({
   },
   pitcherRole: {
     type: String,
-    enum: ['creator', 'curator', 'admin'],
+    enum: ['creator', 'writer', 'admin'],
     required: true
   },
   status: {

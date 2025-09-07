@@ -51,7 +51,7 @@ const SUBMISSION_TYPES = {
 // User Roles Constants
 const USER_ROLES = {
   USER: 'user',
-  CURATOR: 'curator',
+  WRITER: 'writer',
   REVIEWER: 'reviewer',
   ADMIN: 'admin'
 };

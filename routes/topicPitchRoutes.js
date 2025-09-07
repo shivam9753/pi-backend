@@ -37,14 +37,14 @@ const validateTopicPitchCreation = (req, res, next) => {
   next();
 };
 
-// Middleware to check if user can pitch (creator, curator, admin)
+// Middleware to check if user can pitch (creator, writer, admin)
 const requirePitchPermission = (req, res, next) => {
   const userRole = req.user.role;
   
-  if (!['curator', 'admin'].includes(userRole)) {
+  if (!['writer', 'admin'].includes(userRole)) {
     return res.status(403).json({
       success: false,
-      message: 'Only curators and admins can pitch topics'
+      message: 'Only writers and admins can pitch topics'
     });
   }
   
