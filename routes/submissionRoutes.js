@@ -221,6 +221,18 @@ router.get('/', validatePagination, async (req, res) => {
       submissionTypes = await SubmissionService.getSubmissionTypes();
     }
     
+    // Get post type statistics for the filtered query
+    const typeStats = await Submission.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: '$submissionType',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+    
     // Transform data based on status
     let transformedSubmissions;
     if (status === 'published') {
@@ -301,6 +313,12 @@ router.get('/', validatePagination, async (req, res) => {
         currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
         totalPages: Math.ceil(total / parseInt(limit)),
         hasMore: (parseInt(skip) + parseInt(limit)) < total
+      },
+      stats: {
+        typeBreakdown: typeStats.reduce((acc, stat) => {
+          acc[stat._id] = stat.count;
+          return acc;
+        }, {})
       }
     };
     
