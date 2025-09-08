@@ -468,9 +468,12 @@ class SubmissionService {
   }
 
   static async getUserSubmissions(userId) {
+    console.log('🔍 getUserSubmissions called with userId:', userId);
     const submissions = await Submission.find({ userId })
       .sort({ createdAt: -1 })
       .lean();
+    console.log('🔍 Found submissions count:', submissions.length);
+    console.log('🔍 Submissions IDs:', submissions.map(s => s._id));
 
     // Manually populate contentIds for each submission
     const populatedSubmissions = await Promise.all(
