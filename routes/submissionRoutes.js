@@ -1330,17 +1330,24 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
       return res.status(404).json({ message: 'Submission not found' });
     }
     
-    // Check if user owns the submission
-    if (submission.userId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Access denied - not your submission' });
+    // Check if user owns the submission OR has admin/reviewer privileges
+    const isOwner = submission.userId.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+    const isReviewer = req.user.role === 'reviewer';
+    
+    if (!isOwner && !isAdmin && !isReviewer) {
+      return res.status(403).json({ message: 'Access denied - not your submission and insufficient privileges' });
     }
     
-    // Only allow updates for certain statuses
-    const allowedStatuses = ['draft', 'needs_revision'];
-    if (!allowedStatuses.includes(submission.status)) {
-      return res.status(400).json({ 
-        message: `Cannot update submission with status: ${submission.status}` 
-      });
+    // For regular users, only allow updates for certain statuses
+    // For admins and reviewers, allow updates to published posts as well
+    if (!isAdmin && !isReviewer) {
+      const allowedStatuses = ['draft', 'needs_revision'];
+      if (!allowedStatuses.includes(submission.status)) {
+        return res.status(400).json({ 
+          message: `Cannot update submission with status: ${submission.status}` 
+        });
+      }
     }
     
     const { title, description, submissionType, contents, status } = req.body;
@@ -1375,6 +1382,15 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
       // Recalculate reading time and excerpt
       submission.readingTime = Submission.calculateReadingTime(createdContents);
       submission.excerpt = Submission.generateExcerpt(createdContents);
+      
+      // If this is a published post being updated by admin/reviewer, update the published content
+      if (submission.status === 'published' && (isAdmin || isReviewer)) {
+        // Update the published content items
+        for (const content of createdContents) {
+          content.isPublished = true;
+          await content.save();
+        }
+      }
     }
     
     submission.updatedAt = new Date();
@@ -1400,16 +1416,23 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), async (req
       return res.status(404).json({ message: 'Submission not found' });
     }
     
-    // Check if user owns the submission
-    if (submission.userId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Access denied - not your submission' });
+    // Check if user owns the submission OR has admin/reviewer privileges
+    const isOwner = submission.userId.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+    const isReviewer = req.user.role === 'reviewer';
+    
+    if (!isOwner && !isAdmin && !isReviewer) {
+      return res.status(403).json({ message: 'Access denied - not your submission and insufficient privileges' });
     }
     
-    // Only allow resubmit for needs_revision status
-    if (submission.status !== 'needs_revision') {
-      return res.status(400).json({ 
-        message: `Cannot resubmit submission with status: ${submission.status}` 
-      });
+    // For regular users, only allow resubmit for needs_revision status
+    // For admins and reviewers, allow resubmit for more statuses
+    if (!isAdmin && !isReviewer) {
+      if (submission.status !== 'needs_revision') {
+        return res.status(400).json({ 
+          message: `Cannot resubmit submission with status: ${submission.status}` 
+        });
+      }
     }
     
     const { title, description, submissionType, contents } = req.body;
