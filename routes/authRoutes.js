@@ -79,10 +79,16 @@ router.post('/google-login', async (req, res) => {
       });
     } else {
       // User doesn't exist - register them
+      // Create a smart username that fits within 30 char limit
+      const timestamp = Date.now();
+      const baseName = name.replace(/\s+/g, '_').toLowerCase();
+      const maxBaseLength = 30 - String(timestamp).length - 1; // -1 for underscore
+      const smartUsername = baseName.substring(0, maxBaseLength) + '_' + timestamp;
+      
       const userData = {
         email,
         name,
-        username: (name.replace(/\s+/g, '_').toLowerCase() + '_' + Date.now()).substring(0, 30), // Ensure unique username within 30 char limit
+        username: smartUsername, // Smart username generation within 30 char limit
         password: 'GOOGLE_AUTH_' + Date.now(), // Temporary password
         bio: 'Google authenticated user',
         profileImage: picture || ''
