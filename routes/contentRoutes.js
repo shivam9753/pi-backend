@@ -8,6 +8,80 @@ const { mapSingleTag, filterUnmappedUuids, isUuidTag } = require('../utils/tagMa
 
 const router = express.Router();
 
+// GET /api/content/popular-tags - Get most popular tags from published content (MUST BE BEFORE CATCH-ALL)
+router.get('/popular-tags', validatePagination, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    
+    // Get tags from published content (handling string/ObjectId mismatch)
+    const tagAggregation = await Content.aggregate([
+      // Join with submissions to filter only published content
+      // Handle the string submissionId to ObjectId conversion
+      {
+        $lookup: {
+          from: 'submissions',
+          let: { submissionIdStr: '$submissionId' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: [{ $toString: '$_id' }, '$$submissionIdStr'] },
+                    { $eq: ['$status', 'published'] }
+                  ]
+                }
+              }
+            }
+          ],
+          as: 'submission'
+        }
+      },
+      // Only include content that has published submissions
+      { $match: { submission: { $ne: [] } } },
+      // Unwind tags array if it exists
+      { $unwind: { path: '$tags', preserveNullAndEmptyArrays: false } },
+      // Filter out empty tags
+      { $match: { tags: { $ne: '', $ne: null, $exists: true } } },
+      // Group by tag and count frequency
+      {
+        $group: {
+          _id: '$tags',
+          count: { $sum: 1 }
+        }
+      },
+      // Sort by count descending
+      { $sort: { count: -1 } },
+      // Limit results
+      { $limit: parseInt(limit) },
+      // Format output
+      {
+        $project: {
+          _id: 0,
+          tag: '$_id',
+          count: 1
+        }
+      }
+    ]);
+
+    // Extract just the tag names for the response
+    const tags = tagAggregation.map(item => item.tag);
+
+    res.json({
+      success: true,
+      tags,
+      total: tags.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching popular tags:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error fetching popular tags', 
+      error: error.message 
+    });
+  }
+});
+
 // GET /api/content - Consolidated content discovery endpoint (REFACTORED for new schema)
 router.get('/', validatePagination, async (req, res) => {
   try {
