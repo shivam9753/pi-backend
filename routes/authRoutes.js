@@ -82,7 +82,7 @@ router.post('/google-login', async (req, res) => {
       const userData = {
         email,
         name,
-        username: (name.replace(/\s+/g, '_').toLowerCase() + '_' + Date.now()).substring(0, 50), // Ensure unique username within 50 char limit
+        username: (name.replace(/\s+/g, '_').toLowerCase() + '_' + Date.now()).substring(0, 30), // Ensure unique username within 30 char limit
         password: 'GOOGLE_AUTH_' + Date.now(), // Temporary password
         bio: 'Google authenticated user',
         profileImage: picture || ''
