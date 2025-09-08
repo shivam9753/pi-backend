@@ -76,7 +76,7 @@ class UserService {
     const [totalSubmissions, publishedSubmissions, pendingSubmissions, rejectedSubmissions] = await Promise.all([
       Submission.countDocuments({ userId }),
       Submission.countDocuments({ userId, status: SUBMISSION_STATUS.PUBLISHED }),
-      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.PENDING_REVIEW, SUBMISSION_STATUS.IN_PROGRESS, SUBMISSION_STATUS.SHORTLISTED, SUBMISSION_STATUS.SUBMITTED] } }),
+      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.PENDING_REVIEW, SUBMISSION_STATUS.IN_PROGRESS, SUBMISSION_STATUS.SHORTLISTED, SUBMISSION_STATUS.SUBMITTED, SUBMISSION_STATUS.NEEDS_REVISION, SUBMISSION_STATUS.NEEDS_CHANGES, SUBMISSION_STATUS.RESUBMITTED] } }),
       Submission.countDocuments({ userId, status: SUBMISSION_STATUS.REJECTED })
     ]);
 
