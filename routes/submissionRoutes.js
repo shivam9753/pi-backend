@@ -1361,6 +1361,7 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
       // Create new content items
       const contentDocs = contents.map(content => ({
         userId: req.user._id,
+        submissionId: submission._id.toString(), // Add required submissionId
         title: content.title,
         body: content.body,
         type: content.type || submissionType,
@@ -1428,6 +1429,7 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), async (req
       // Create new content items
       const contentDocs = contents.map(content => ({
         userId: req.user._id,
+        submissionId: submission._id.toString(), // Add required submissionId
         title: content.title,
         body: content.body,
         type: content.type || submissionType,
