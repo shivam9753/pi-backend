@@ -475,29 +475,8 @@ class SubmissionService {
     console.log('🔍 Found submissions count:', submissions.length);
     console.log('🔍 Submissions IDs:', submissions.map(s => s._id));
 
-    // Manually populate contentIds for each submission
-    const populatedSubmissions = await Promise.all(
-      submissions.map(async (submission) => {
-        if (submission.contentIds && submission.contentIds.length > 0) {
-          // Use direct MongoDB query with string IDs
-          const contents = await Submission.db.collection('contents').find({
-            _id: { $in: submission.contentIds }
-          }).toArray();
-          
-          // Create a map for fast lookup and preserve order
-          const contentMap = new Map(contents.map(content => [content._id, content]));
-          const sortedContents = submission.contentIds
-            .map(id => contentMap.get(id))
-            .filter(Boolean);
-          
-          submission.contentIds = sortedContents;
-        }
-        return submission;
-      })
-    );
-
-    // Transform for frontend
-    return populatedSubmissions.map(submission => ({
+    // Transform for frontend - only metadata, no content
+    return submissions.map(submission => ({
       _id: submission._id,
       title: submission.title,
       submissionType: submission.submissionType,
@@ -506,13 +485,11 @@ class SubmissionService {
       reviewedAt: submission.reviewedAt,
       publishedWorkId: submission.status === 'published' ? submission._id : null,
       excerpt: submission.excerpt,
-      content: submission.contentIds?.[0]?.body || '',
+      tags: submission.tags || [],
+      // Don't include content body - only metadata for cards
       reviewFeedback: submission.reviewNotes || '',
       revisionNotes: submission.revisionNotes || '', // Add revision notes for needs_revision status
-      wordCount: submission.contentIds?.reduce((total, content) => {
-        if (!content.body) return total;
-        return total + content.body.trim().split(/\s+/).filter(word => word.length > 0).length;
-      }, 0) || 0,
+      wordCount: submission.wordCount || 0, // Use stored wordCount instead of calculating from content
       createdAt: submission.createdAt,
       updatedAt: submission.updatedAt
     }));

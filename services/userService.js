@@ -73,19 +73,49 @@ class UserService {
     // Get user stats from submissions
     const Submission = require('../models/Submission');
     
-    const [totalSubmissions, publishedSubmissions, pendingSubmissions, rejectedSubmissions] = await Promise.all([
+    // Get counts by status
+    const [
+      totalSubmissions, 
+      publishedSubmissions, 
+      pendingSubmissions, 
+      needsRevisionSubmissions,
+      draftSubmissions,
+      acceptedSubmissions,
+      rejectedSubmissions
+    ] = await Promise.all([
       Submission.countDocuments({ userId }),
       Submission.countDocuments({ userId, status: SUBMISSION_STATUS.PUBLISHED }),
-      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.PENDING_REVIEW, SUBMISSION_STATUS.IN_PROGRESS, SUBMISSION_STATUS.SHORTLISTED, SUBMISSION_STATUS.SUBMITTED, SUBMISSION_STATUS.NEEDS_REVISION, SUBMISSION_STATUS.NEEDS_CHANGES, SUBMISSION_STATUS.RESUBMITTED] } }),
+      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.PENDING_REVIEW, SUBMISSION_STATUS.IN_PROGRESS, SUBMISSION_STATUS.SHORTLISTED, SUBMISSION_STATUS.SUBMITTED, SUBMISSION_STATUS.RESUBMITTED] } }),
+      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.NEEDS_REVISION, SUBMISSION_STATUS.NEEDS_CHANGES] } }),
+      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.DRAFT }),
+      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.ACCEPTED, SUBMISSION_STATUS.APPROVED] } }),
       Submission.countDocuments({ userId, status: SUBMISSION_STATUS.REJECTED })
+    ]);
+
+    // Get counts by submission type
+    const submissionTypeCounts = await Submission.aggregate([
+      { $match: { userId: userId } },
+      { $group: { _id: '$submissionType', count: { $sum: 1 } } }
     ]);
 
     const userProfile = user.toPublicJSON();
     userProfile.submissionStats = {
       total: totalSubmissions,
-      accepted: publishedSubmissions,
+      published: publishedSubmissions,
       pending: pendingSubmissions,
-      rejected: rejectedSubmissions
+      needsRevision: needsRevisionSubmissions,
+      draft: draftSubmissions,
+      accepted: acceptedSubmissions,
+      rejected: rejectedSubmissions,
+      byType: submissionTypeCounts.reduce((acc, item) => {
+        acc[item._id] = item.count;
+        return acc;
+      }, {
+        poem: 0,
+        prose: 0, 
+        article: 0,
+        opinion: 0
+      })
     };
 
     return userProfile;
