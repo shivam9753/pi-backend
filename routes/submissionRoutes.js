@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const Submission = require('../models/Submission');
 const Content = require('../models/Content');
+const Review = require('../models/Review');
 const SubmissionService = require('../services/submissionService');
 const { authenticateUser, requireReviewer, requireWriter, requireAdmin } = require('../middleware/auth');
 const { 
@@ -31,6 +32,701 @@ const upload = multer({
     }
   }
 });
+
+// ========================================
+// NEW OPTIMIZED LIGHTWEIGHT ENDPOINTS
+// ========================================
+
+// GET /api/submissions/review-queue - Lightweight review workflow cards
+router.get('/review-queue', authenticateUser, requireReviewer, validatePagination, async (req, res) => {
+  try {
+    const {
+      limit = 20,
+      skip = 0,
+      status,
+      type,
+      urgent,
+      newAuthor,
+      quickRead,
+      topicSubmission,
+      sortBy = 'createdAt',
+      order = 'desc'
+    } = req.query;
+
+    // Build query for review queue statuses
+    const query = {
+      status: {
+        $in: ['pending_review', 'in_progress', 'shortlisted', 'resubmitted']
+      }
+    };
+
+    // Apply filters
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    if (type && type !== 'all') {
+      query.submissionType = type;
+    }
+
+    // Build aggregation pipeline for lightweight data
+    const pipeline = [
+      { $match: query },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
+      { $unwind: '$author' },
+      {
+        $lookup: {
+          from: 'submissions',
+          let: { authorId: '$author._id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$userId', '$$authorId'] }, status: 'published' } },
+            { $count: 'publishedCount' }
+          ],
+          as: 'authorStats'
+        }
+      },
+      {
+        $addFields: {
+          isNewAuthor: {
+            $eq: [{ $ifNull: [{ $arrayElemAt: ['$authorStats.publishedCount', 0] }, 0] }, 0]
+          },
+          isUrgent: {
+            $or: [
+              { $eq: ['$status', 'resubmitted'] },
+              {
+                $and: [
+                  { $gte: [{ $subtract: [new Date(), '$createdAt'] }, 7 * 24 * 60 * 60 * 1000] } // 7 days old
+                ]
+              }
+            ]
+          },
+          hasTopicPitch: { $ne: ['$topicPitchId', null] }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          excerpt: 1,
+          submissionType: 1,
+          status: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          readingTime: 1,
+          wordCount: 1,
+          imageUrl: 1,
+          isUrgent: 1,
+          hasTopicPitch: 1,
+          isNewAuthor: 1,
+          author: {
+            _id: '$author._id',
+            name: '$author.name',
+            username: '$author.username',
+            email: '$author.email'
+          }
+        }
+      }
+    ];
+
+    // Apply additional filters
+    if (urgent === 'true') {
+      pipeline.push({ $match: { isUrgent: true } });
+    }
+    if (newAuthor === 'true') {
+      pipeline.push({ $match: { isNewAuthor: true } });
+    }
+    if (quickRead === 'true') {
+      pipeline.push({ $match: { readingTime: { $lte: 5 } } });
+    }
+    if (topicSubmission === 'true') {
+      pipeline.push({ $match: { hasTopicPitch: true } });
+    }
+
+    // Add sorting
+    const sortOrder = order === 'asc' ? 1 : -1;
+    pipeline.push({ $sort: { [sortBy]: sortOrder } });
+
+    // Add pagination
+    pipeline.push({ $skip: parseInt(skip) });
+    pipeline.push({ $limit: parseInt(limit) });
+
+    const submissions = await Submission.aggregate(pipeline);
+    const total = await Submission.countDocuments(query);
+
+    res.json({
+      success: true,
+      submissions,
+      pagination: {
+        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
+        totalPages: Math.ceil(total / parseInt(limit)),
+        limit: parseInt(limit),
+        skip: parseInt(skip),
+        hasMore: (parseInt(skip) + parseInt(limit)) < total
+      },
+      total,
+      filters: {
+        statuses: ['pending_review', 'in_progress', 'shortlisted', 'resubmitted'],
+        types: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'],
+        urgent: urgent === 'true',
+        newAuthor: newAuthor === 'true',
+        quickRead: quickRead === 'true',
+        topicSubmission: topicSubmission === 'true'
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching review queue:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching review queue', 
+      error: error.message 
+    });
+  }
+});
+
+// GET /api/submissions/publish-queue - Lightweight publish workflow cards
+router.get('/publish-queue', authenticateUser, requireReviewer, validatePagination, async (req, res) => {
+  try {
+    const {
+      limit = 20,
+      skip = 0,
+      type,
+      sortBy = 'acceptedAt',
+      order = 'desc'
+    } = req.query;
+
+    // Build query for accepted submissions ready to publish
+    const query = {
+      status: 'accepted'
+    };
+
+    // Apply type filter
+    if (type && type !== 'all') {
+      query.submissionType = type;
+    }
+
+    // Build aggregation pipeline for lightweight publish data
+    const pipeline = [
+      { $match: query },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
+      { $unwind: '$author' },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          excerpt: 1,
+          submissionType: 1,
+          status: 1,
+          acceptedAt: '$reviewedAt',
+          createdAt: 1,
+          readingTime: 1,
+          imageUrl: 1,
+          hasImage: { $ne: ['$imageUrl', null] },
+          author: {
+            _id: '$author._id',
+            name: '$author.name',
+            username: '$author.username'
+          }
+        }
+      }
+    ];
+
+    // Add sorting
+    const sortOrder = order === 'asc' ? 1 : -1;
+    const sortField = sortBy === 'acceptedAt' ? 'acceptedAt' : sortBy;
+    pipeline.push({ $sort: { [sortField]: sortOrder } });
+
+    // Add pagination
+    pipeline.push({ $skip: parseInt(skip) });
+    pipeline.push({ $limit: parseInt(limit) });
+
+    const submissions = await Submission.aggregate(pipeline);
+    const total = await Submission.countDocuments(query);
+
+    res.json({
+      success: true,
+      submissions,
+      pagination: {
+        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
+        totalPages: Math.ceil(total / parseInt(limit)),
+        limit: parseInt(limit),
+        skip: parseInt(skip),
+        hasMore: (parseInt(skip) + parseInt(limit)) < total
+      },
+      total,
+      filters: {
+        types: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion']
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching publish queue:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching publish queue', 
+      error: error.message 
+    });
+  }
+});
+
+// GET /api/submissions/explore - Lightweight public content cards  
+router.get('/explore', validatePagination, async (req, res) => {
+  try {
+    const {
+      limit = 20,
+      skip = 0,
+      type,
+      featured,
+      sortBy = 'publishedAt', 
+      order = 'desc'
+    } = req.query;
+
+    // Build query for published submissions
+    const query = {
+      status: 'published'
+    };
+
+    // Apply type filter
+    if (type && type !== 'all') {
+      query.submissionType = type;
+    }
+
+    // Apply featured filter
+    if (featured === 'true') {
+      query.featured = true;
+    }
+
+    // Build aggregation pipeline for lightweight public data
+    const pipeline = [
+      { $match: query },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
+      { $unwind: '$author' },
+      {
+        $project: {
+          _id: 1,
+          slug: '$seo.slug',
+          title: 1,
+          excerpt: 1,
+          submissionType: 1,
+          publishedAt: '$reviewedAt',
+          readingTime: 1,
+          viewCount: { $ifNull: ['$viewCount', 0] },
+          imageUrl: 1,
+          featured: { $ifNull: ['$featured', false] },
+          author: {
+            name: '$author.name',
+            username: '$author.username'
+          }
+        }
+      }
+    ];
+
+    // Add sorting - handle different sort fields
+    const sortOrder = order === 'asc' ? 1 : -1;
+    let sortField;
+    switch (sortBy) {
+      case 'publishedAt':
+      case 'latest':
+        sortField = 'publishedAt';
+        break;
+      case 'viewCount':
+      case 'popular':
+        sortField = 'viewCount';
+        break;
+      case 'title':
+        sortField = 'title';
+        break;
+      default:
+        sortField = 'publishedAt';
+    }
+    pipeline.push({ $sort: { [sortField]: sortOrder } });
+
+    // Add pagination
+    pipeline.push({ $skip: parseInt(skip) });
+    pipeline.push({ $limit: parseInt(limit) });
+
+    const submissions = await Submission.aggregate(pipeline);
+    const total = await Submission.countDocuments(query);
+
+    res.json({
+      success: true,
+      submissions,
+      pagination: {
+        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
+        totalPages: Math.ceil(total / parseInt(limit)),
+        limit: parseInt(limit),
+        skip: parseInt(skip),
+        hasMore: (parseInt(skip) + parseInt(limit)) < total
+      },
+      total,
+      filters: {
+        types: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'],
+        featured: featured === 'true'
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching explore content:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching explore content', 
+      error: error.message 
+    });
+  }
+});
+
+// GET /api/submissions/:id/review-data - Complete review data (optimized)
+router.get('/:id/review-data', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    // Get submission with complete data needed for review
+    const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
+    
+    if (!submission) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Submission not found' 
+      });
+    }
+
+    // Get review history
+    const reviews = await Review.find({ submissionId: req.params.id })
+      .populate('reviewerId', 'name username')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Format response with everything needed for review workflow
+    res.json({
+      success: true,
+      submission: {
+        _id: submission._id,
+        title: submission.title,
+        description: submission.description,
+        submissionType: submission.submissionType,
+        status: submission.status,
+        createdAt: submission.createdAt,
+        updatedAt: submission.updatedAt,
+        readingTime: submission.readingTime,
+        wordCount: submission.wordCount,
+        imageUrl: submission.imageUrl,
+        excerpt: submission.excerpt,
+        topicPitchId: submission.topicPitchId,
+        userId: submission.userId
+      },
+      contents: submission.contents || [],
+      author: {
+        _id: submission.userId._id,
+        name: submission.userId.name,
+        username: submission.userId.username,
+        email: submission.userId.email,
+        profileImage: submission.userId.profileImage,
+        bio: submission.userId.bio
+      },
+      reviewHistory: reviews.map(review => ({
+        _id: review._id,
+        status: review.status,
+        reviewNotes: review.reviewNotes,
+        rating: review.rating,
+        createdAt: review.createdAt,
+        reviewer: {
+          name: review.reviewerId.name,
+          username: review.reviewerId.username
+        }
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching review data:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching review data', 
+      error: error.message 
+    });
+  }
+});
+
+// GET /api/submissions/:id/publish-data - Complete publish data (optimized)
+router.get('/:id/publish-data', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    // Get submission with complete data needed for publishing
+    const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
+    
+    if (!submission) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Submission not found' 
+      });
+    }
+
+    // Ensure submission is in accepted state
+    if (submission.status !== 'accepted') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Only accepted submissions can be published' 
+      });
+    }
+
+    // Get review history summary
+    const reviews = await Review.find({ submissionId: req.params.id })
+      .populate('reviewerId', 'name username')
+      .sort({ createdAt: -1 })
+      .limit(3) // Only get recent reviews for context
+      .lean();
+
+    // Format response with everything needed for publish workflow
+    res.json({
+      success: true,
+      submission: {
+        _id: submission._id,
+        title: submission.title,
+        description: submission.description,
+        submissionType: submission.submissionType,
+        status: submission.status,
+        createdAt: submission.createdAt,
+        acceptedAt: submission.reviewedAt,
+        readingTime: submission.readingTime,
+        wordCount: submission.wordCount,
+        imageUrl: submission.imageUrl,
+        excerpt: submission.excerpt,
+        seo: submission.seo || {}
+      },
+      contents: submission.contents || [],
+      author: {
+        _id: submission.userId._id,
+        name: submission.userId.name,
+        username: submission.userId.username,
+        email: submission.userId.email,
+        profileImage: submission.userId.profileImage
+      },
+      recentReviews: reviews.map(review => ({
+        status: review.status,
+        reviewNotes: review.reviewNotes,
+        rating: review.rating,
+        createdAt: review.createdAt,
+        reviewer: review.reviewerId.username
+      })),
+      suggestedSEO: {
+        slug: submission.seo?.slug || `${submission.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${submission.userId.username}`,
+        metaTitle: submission.seo?.metaTitle || submission.title,
+        metaDescription: submission.seo?.metaDescription || submission.excerpt || submission.description?.substring(0, 160),
+        keywords: submission.seo?.keywords || [],
+        ogImage: submission.seo?.ogImage || submission.imageUrl
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching publish data:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching publish data', 
+      error: error.message 
+    });
+  }
+});
+
+// GET /api/submissions/admin/purge-candidates - Admin purge management
+router.get('/admin/purge-candidates', authenticateUser, requireAdmin, validatePagination, async (req, res) => {
+  try {
+    const { 
+      limit = 50, 
+      skip = 0,
+      type,
+      daysOld = 30 
+    } = req.query;
+
+    // Build query for purge candidates (drafts and rejected older than specified days)
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - parseInt(daysOld));
+
+    const query = {
+      $or: [
+        { status: 'draft', createdAt: { $lt: cutoffDate } },
+        { status: 'rejected', updatedAt: { $lt: cutoffDate } }
+      ]
+    };
+
+    if (type && type !== 'all') {
+      query.submissionType = type;
+    }
+
+    // Build pipeline for purge data
+    const pipeline = [
+      { $match: query },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
+      { $unwind: '$author' },
+      {
+        $addFields: {
+          daysOld: {
+            $floor: {
+              $divide: [
+                { $subtract: [new Date(), '$updatedAt'] },
+                24 * 60 * 60 * 1000 // milliseconds in a day
+              ]
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          submissionType: 1,
+          status: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          daysOld: 1,
+          author: {
+            _id: '$author._id',
+            name: '$author.name',
+            username: '$author.username'
+          }
+        }
+      },
+      { $sort: { updatedAt: 1 } }, // Oldest first
+      { $skip: parseInt(skip) },
+      { $limit: parseInt(limit) }
+    ];
+
+    const submissions = await Submission.aggregate(pipeline);
+    const total = await Submission.countDocuments(query);
+
+    res.json({
+      success: true,
+      submissions,
+      pagination: {
+        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
+        totalPages: Math.ceil(total / parseInt(limit)),
+        limit: parseInt(limit),
+        skip: parseInt(skip),
+        hasMore: (parseInt(skip) + parseInt(limit)) < total
+      },
+      total,
+      summary: {
+        drafts: await Submission.countDocuments({ status: 'draft', createdAt: { $lt: cutoffDate } }),
+        rejected: await Submission.countDocuments({ status: 'rejected', updatedAt: { $lt: cutoffDate } })
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching purge candidates:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching purge candidates', 
+      error: error.message 
+    });
+  }
+});
+
+// GET /api/submissions/:id/content-view - Public content view (optimized)
+router.get('/:id/content-view', validateObjectId('id'), async (req, res) => {
+  try {
+    // Get published submission by ID for public viewing
+    const submission = await Submission.findOne({ 
+      _id: req.params.id, 
+      status: 'published' 
+    })
+      .populate('userId', 'name username profileImage bio')
+      .lean();
+
+    if (!submission) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Published content not found' 
+      });
+    }
+
+    // Get content with manual population
+    const contents = await Submission.db.collection('contents').find({
+      _id: { $in: submission.contentIds.map(id => id.toString()) }
+    }).toArray();
+
+    // Get related posts (same type, different author)
+    const relatedPosts = await Submission.find({
+      status: 'published',
+      submissionType: submission.submissionType,
+      _id: { $ne: submission._id },
+      userId: { $ne: submission.userId._id }
+    })
+      .select('_id title excerpt imageUrl readingTime seo.slug')
+      .populate('userId', 'name username')
+      .limit(3)
+      .lean();
+
+    res.json({
+      success: true,
+      submission: {
+        _id: submission._id,
+        title: submission.title,
+        description: submission.description,
+        submissionType: submission.submissionType,
+        publishedAt: submission.reviewedAt,
+        readingTime: submission.readingTime,
+        viewCount: submission.viewCount || 0,
+        imageUrl: submission.imageUrl,
+        excerpt: submission.excerpt,
+        slug: submission.seo?.slug,
+        seo: submission.seo
+      },
+      contents: contents.map(content => ({
+        _id: content._id,
+        title: content.title,
+        body: content.body,
+        tags: content.tags || [],
+        footnotes: content.footnotes || ''
+      })),
+      author: {
+        _id: submission.userId._id,
+        name: submission.userId.name,
+        username: submission.userId.username,
+        profileImage: submission.userId.profileImage,
+        bio: submission.userId.bio
+      },
+      relatedPosts: relatedPosts.map(post => ({
+        _id: post._id,
+        title: post.title,
+        excerpt: post.excerpt,
+        imageUrl: post.imageUrl,
+        readingTime: post.readingTime,
+        slug: post.seo?.slug,
+        author: {
+          name: post.userId.name,
+          username: post.userId.username
+        }
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching content view:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching content view', 
+      error: error.message 
+    });
+  }
+});
+
+// ========================================
+// END OF NEW OPTIMIZED ENDPOINTS
+// ========================================
 
 // GET /api/submissions/:id/history - Get submission with full history
 router.get('/:id/history', authenticateUser, validateObjectId('id'), async (req, res) => {
