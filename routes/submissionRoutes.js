@@ -1350,13 +1350,14 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
       }
     }
     
-    const { title, description, submissionType, contents, status } = req.body;
+    const { title, description, submissionType, contents, status, imageUrl } = req.body;
     
     // Update submission fields
     if (title) submission.title = title;
     if (description !== undefined) submission.description = description;
     if (submissionType) submission.submissionType = submissionType;
     if (status) submission.status = status;
+    if (imageUrl !== undefined) submission.imageUrl = imageUrl;
     
     // Handle content updates if provided
     if (contents && Array.isArray(contents)) {
