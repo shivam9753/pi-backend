@@ -273,7 +273,136 @@ router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, 
   }
 });
 
-// LEGACY ENDPOINTS REMOVED - Use POST /:id/action instead
+// NEW SEMANTIC REVIEW ENDPOINTS - No action parameter required
+// These replace the generic POST /:id/action for better API semantics
+
+// POST /api/reviews/:id/approve - Approve submission
+router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const { reviewNotes, rating } = req.body;
+    
+    const reviewData = {
+      reviewerId: req.user._id,
+      status: SUBMISSION_STATUS.ACCEPTED,
+      reviewNotes: reviewNotes ? reviewNotes.trim() : '',
+      rating: rating
+    };
+
+    // Create review record and update status
+    const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
+    await result.submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user, reviewNotes || 'Submission approved');
+    
+    res.json({
+      success: true,
+      message: 'Submission approved successfully'
+    });
+  } catch (error) {
+    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
+      return res.status(400).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error approving submission', error: error.message });
+  }
+});
+
+// POST /api/reviews/:id/reject - Reject submission
+router.post('/:id/reject', requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const { reviewNotes, rating } = req.body;
+    
+    // Validate required review notes for rejection
+    if (!reviewNotes || reviewNotes.trim().length === 0) {
+      return res.status(400).json({ 
+        message: 'Review notes are required when rejecting a submission' 
+      });
+    }
+    
+    const reviewData = {
+      reviewerId: req.user._id,
+      status: SUBMISSION_STATUS.REJECTED,
+      reviewNotes: reviewNotes.trim(),
+      rating: rating
+    };
+
+    // Create review record and update status
+    const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
+    await result.submission.changeStatus(SUBMISSION_STATUS.REJECTED, req.user, reviewNotes.trim());
+    
+    res.json({
+      success: true,
+      message: 'Submission rejected'
+    });
+  } catch (error) {
+    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
+      return res.status(400).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error rejecting submission', error: error.message });
+  }
+});
+
+// POST /api/reviews/:id/revision - Request revision
+router.post('/:id/revision', requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const { reviewNotes, rating } = req.body;
+    
+    // Validate required review notes for revision
+    if (!reviewNotes || reviewNotes.trim().length === 0) {
+      return res.status(400).json({ 
+        message: 'Review notes are required when requesting revision for a submission' 
+      });
+    }
+    
+    const reviewData = {
+      reviewerId: req.user._id,
+      status: SUBMISSION_STATUS.NEEDS_REVISION,
+      reviewNotes: reviewNotes.trim(),
+      rating: rating
+    };
+
+    // Create review record and update status
+    const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
+    await result.submission.changeStatus(SUBMISSION_STATUS.NEEDS_REVISION, req.user, reviewNotes.trim());
+    
+    res.json({
+      success: true,
+      message: 'Revision requested'
+    });
+  } catch (error) {
+    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
+      return res.status(400).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error requesting revision', error: error.message });
+  }
+});
+
+// POST /api/reviews/:id/shortlist - Shortlist submission
+router.post('/:id/shortlist', requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const { reviewNotes, reviewerId } = req.body;
+    
+    const reviewData = {
+      reviewerId: req.user._id,
+      status: SUBMISSION_STATUS.SHORTLISTED,
+      reviewNotes: reviewNotes ? reviewNotes.trim() : 'Shortlisted for further consideration',
+      rating: null // Shortlisting doesn't require rating
+    };
+
+    // Create review record and update status
+    const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
+    await result.submission.changeStatus(SUBMISSION_STATUS.SHORTLISTED, req.user, reviewNotes || 'Submission shortlisted for further review');
+    
+    res.json({
+      success: true,
+      message: 'Submission shortlisted successfully'
+    });
+  } catch (error) {
+    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
+      return res.status(400).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error shortlisting submission', error: error.message });
+  }
+});
+
+// LEGACY ENDPOINTS REMOVED - Use semantic endpoints above instead
 // These endpoints have been consolidated into the unified action endpoint for better maintainability
 
 // GET /api/reviews/my-reviews - Get reviews by current user

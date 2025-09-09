@@ -28,7 +28,6 @@ class UserService {
       username,
       password: hashedPassword,
       bio: bio || '',
-      needsProfileCompletion: !bio // If no bio provided, needs completion
     });
 
     await user.save();

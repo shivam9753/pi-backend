@@ -49,11 +49,6 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
-  // Track if user needs to complete profile setup
-  needsProfileCompletion: {
-    type: Boolean,
-    default: false
-  }
 }, {
   timestamps: true,
   versionKey: false,
@@ -85,8 +80,7 @@ userSchema.methods.toAuthJSON = function() {
     name: this.name,
     role: this.role,
     bio: this.bio,
-    profileImage: this.profileImage,
-    needsProfileCompletion: this.needsProfileCompletion
+    profileImage: this.profileImage
   };
 };
 

@@ -1093,7 +1093,9 @@ router.get('/featured', async (req, res) => {
   }
 });
 
-// DEPRECATED: Use /api/submissions?search=query instead
+// DEPRECATED: Use /api/submissions/explore?user=me instead
+// This endpoint is redundant with /users/profile which provides user data + submission stats
+// Use /users/profile for complete user profile, or /submissions/explore?user=me for submission list
 
 // GET /api/submissions/user/me - Get current user's submissions (must come before /:userId)
 router.get('/user/me', authenticateUser, async (req, res) => {
@@ -1101,6 +1103,12 @@ router.get('/user/me', authenticateUser, async (req, res) => {
     if (!req.user?.userId) {
       return res.status(400).json({ message: 'User not authenticated' });
     }
+    
+    // Add deprecation headers to inform frontend
+    res.set('X-API-Deprecated', 'true');
+    res.set('X-API-Replacement', '/api/submissions/explore?user=me');
+    res.set('X-API-Alternative', '/api/users/profile (for user data + stats)');
+    
     const submissions = await SubmissionService.getUserSubmissions(req.user.userId);
     res.json({ submissions });
   } catch (error) {
@@ -2104,32 +2112,33 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
   }
 });
 
-// PUT /api/submissions/:id/resubmit - Resubmit after revision
-router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), async (req, res) => {
+// PUT /api/submissions/:id/resubmit - Semantic resubmission API
+router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSubmissionUpdate, async (req, res) => {
   try {
     const submission = await Submission.findById(req.params.id);
     
     if (!submission) {
-      return res.status(404).json({ message: 'Submission not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Submission not found' 
+      });
     }
     
-    // Check if user owns the submission OR has admin/reviewer privileges
-    const isOwner = submission.userId.toString() === req.user._id.toString();
-    const isAdmin = req.user.role === 'admin';
-    const isReviewer = req.user.role === 'reviewer';
-    
-    if (!isOwner && !isAdmin && !isReviewer) {
-      return res.status(403).json({ message: 'Access denied - not your submission and insufficient privileges' });
+    // Check ownership
+    if (submission.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Can only resubmit your own submissions' 
+      });
     }
     
-    // For regular users, only allow resubmit for needs_revision status
-    // For admins and reviewers, allow resubmit for more statuses
-    if (!isAdmin && !isReviewer) {
-      if (submission.status !== 'needs_revision') {
-        return res.status(400).json({ 
-          message: `Cannot resubmit submission with status: ${submission.status}` 
-        });
-      }
+    // Check if submission can be resubmitted
+    const allowedStatuses = ['needs_revision', 'draft', 'rejected'];
+    if (!allowedStatuses.includes(submission.status)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot resubmit submission with status: ${submission.status}. Allowed statuses: ${allowedStatuses.join(', ')}` 
+      });
     }
     
     const { title, description, submissionType, contents } = req.body;
@@ -2146,46 +2155,60 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), async (req
         await Content.deleteMany({ _id: { $in: submission.contentIds } });
       }
       
-      // Create new content items
-      const contentDocs = contents.map(content => ({
-        userId: req.user._id,
-        submissionId: submission._id.toString(), // Add required submissionId
-        title: content.title,
-        body: content.body,
-        type: content.type || submissionType,
-        tags: content.tags || [],
-        footnotes: content.footnotes || ''
-      }));
+      // Create new content items with proper _id handling
+      const newContentIds = [];
       
-      const createdContents = await Content.create(contentDocs);
-      submission.contentIds = createdContents.map(c => c._id);
+      for (const contentData of contents) {
+        const contentDoc = {
+          userId: req.user._id,
+          submissionId: submission._id.toString(),
+          title: contentData.title,
+          body: contentData.body,
+          type: contentData.type || submissionType,
+          tags: contentData.tags || [],
+          footnotes: contentData.footnotes || ''
+        };
+        
+        const newContent = await Content.create(contentDoc);
+        newContentIds.push(newContent._id);
+      }
+      
+      submission.contentIds = newContentIds;
       
       // Recalculate reading time and excerpt
+      const createdContents = await Content.find({ _id: { $in: newContentIds } });
       submission.readingTime = Submission.calculateReadingTime(createdContents);
       submission.excerpt = Submission.generateExcerpt(createdContents);
     }
     
-    // Change status to resubmitted and clear revision notes
+    // Automatically change status to 'resubmitted' - this is the semantic behavior
+    const previousStatus = submission.status;
     submission.status = 'resubmitted';
-    submission.revisionNotes = null;
+    submission.revisionNotes = null; // Clear any previous revision notes
     submission.updatedAt = new Date();
     
-    // Add to history
-    submission.addToHistory(
-      req.user._id,
-      'resubmitted',
-      'Submission resubmitted after revision'
-    );
-    
-    await submission.save();
+    // Add to history using the changeStatus method for proper tracking
+    await submission.changeStatus('resubmitted', req.user, `Resubmitted from ${previousStatus} status`);
     
     res.json({
       success: true,
-      message: 'Submission resubmitted successfully',
-      submission
+      message: 'Submission resubmitted successfully and status updated to "resubmitted"',
+      submission: {
+        _id: submission._id,
+        title: submission.title,
+        status: submission.status,
+        previousStatus: previousStatus,
+        updatedAt: submission.updatedAt,
+        submissionType: submission.submissionType
+      }
     });
   } catch (error) {
-    res.status(500).json({ message: 'Error resubmitting submission', error: error.message });
+    console.error('Error resubmitting submission:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error resubmitting submission', 
+      error: error.message 
+    });
   }
 });
 

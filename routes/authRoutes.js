@@ -75,7 +75,6 @@ router.post('/google-login', async (req, res) => {
         message: 'Google user authenticated successfully',
         user: updatedUser.toAuthJSON(),
         token,
-        needsProfileCompletion: updatedUser.needsProfileCompletion || false
       });
     } else {
       // User doesn't exist - register them
@@ -90,7 +89,7 @@ router.post('/google-login', async (req, res) => {
         name,
         username: smartUsername, // Smart username generation within 30 char limit
         password: 'GOOGLE_AUTH_' + Date.now(), // Temporary password
-        bio: 'Google authenticated user',
+        bio: 'To be updated!', // Simple default bio
         profileImage: picture || ''
       };
 
@@ -100,7 +99,6 @@ router.post('/google-login', async (req, res) => {
         message: 'Google user registered successfully',
         user: result.user.toAuthJSON(),
         token: result.token,
-        needsProfileCompletion: result.user.needsProfileCompletion || false
       });
     }
   } catch (error) {
