@@ -432,6 +432,7 @@ router.get('/:id/review-data', authenticateUser, requireReviewer, validateObject
       contents: submission.contents || [],
       author: {
         _id: submission.userId._id,
+        id: submission.userId._id,
         name: submission.userId.name,
         username: submission.userId.username,
         email: submission.userId.email,

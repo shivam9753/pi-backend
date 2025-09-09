@@ -131,12 +131,11 @@ class UserService {
     console.log('👤 Current user data:', {
       name: user.name,
       bio: user.bio,
-      profileCompleted: user.profileCompleted,
       profileImage: user.profileImage
     });
 
     // Update allowed fields
-    const allowedFields = ['name', 'username', 'bio', 'profileImage', 'socialLinks', 'preferences', 'profileCompleted'];
+    const allowedFields = ['name', 'username', 'bio', 'profileImage', 'socialLinks', 'preferences'];
     const updates = {};
 
     Object.keys(updateData).forEach(key => {
@@ -161,7 +160,6 @@ class UserService {
     console.log('💾 User saved successfully:', {
       name: user.name,
       bio: user.bio,
-      profileCompleted: user.profileCompleted,
       profileImage: user.profileImage
     });
 

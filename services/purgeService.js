@@ -70,7 +70,12 @@ class PurgeService {
         _id: sub._id,
         title: sub.title,
         status: sub.status,
-        author: sub.userId?.username || 'Unknown',
+        author: sub.userId ? {
+          _id: sub.userId._id,
+          id: sub.userId._id,
+          name: sub.userId.name,
+          username: sub.userId.username
+        } : null,
         submittedAt: sub.createdAt,
         eligibleSince: sub.updatedAt,
         daysSinceEligible: Math.floor((Date.now() - sub.updatedAt) / (24 * 60 * 60 * 1000))
@@ -120,7 +125,12 @@ class PurgeService {
       preview.details.push({
         submissionId: submission._id,
         title: submission.title,
-        author: submission.userId.username,
+        author: {
+          _id: submission.userId._id,
+          id: submission.userId._id,
+          name: submission.userId.name,
+          username: submission.userId.username
+        },
         contentPieces: contentCount,
         reviews: reviewCount,
         status: submission.status

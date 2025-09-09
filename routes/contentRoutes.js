@@ -229,6 +229,7 @@ router.get('/', validatePagination, async (req, res) => {
         seo: 1,  // Include full SEO object
         author: {
           _id: '$author._id',
+          id: '$author._id',
           username: '$author.username',
           name: '$author.name',
           profileImage: '$author.profileImage'
@@ -318,6 +319,7 @@ router.get('/id/:contentId', validateObjectId('contentId'), async (req, res) => 
           seo: 1,
           author: {
             _id: '$author._id',
+            id: '$author._id',
             username: '$author.username',
             name: '$author.name',
             profileImage: '$author.profileImage'
@@ -388,6 +390,7 @@ router.get('/:slug', async (req, res) => {
           seo: 1,
           author: {
             _id: '$author._id',
+            id: '$author._id',
             username: '$author.username',
             name: '$author.name',
             profileImage: '$author.profileImage'

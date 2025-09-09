@@ -181,16 +181,33 @@ router.post('/:id/move-to-progress', requireReviewer, validateObjectId('id'), as
   try {
     const { notes } = req.body;
     
+    console.log(`🔍 Looking for submission with ID: ${req.params.id}`);
+    
     const submission = await Submission.findById(req.params.id);
     if (!submission) {
-      return res.status(404).json({ message: 'Submission not found' });
+      console.log(`❌ Submission not found: ${req.params.id}`);
+      return res.status(404).json({ 
+        message: 'Submission not found',
+        details: `No submission exists with ID: ${req.params.id}`,
+        submissionId: req.params.id
+      });
     }
     
+    console.log(`✅ Found submission: ${submission.title} with status: ${submission.status}`);
+    
     if (submission.status !== SUBMISSION_STATUS.PENDING_REVIEW) {
-      return res.status(400).json({ message: 'Only pending submissions can be moved to in progress' });
+      console.log(`❌ Wrong status: Expected ${SUBMISSION_STATUS.PENDING_REVIEW}, got ${submission.status}`);
+      return res.status(400).json({ 
+        message: 'Only pending submissions can be moved to in progress',
+        details: `Current status: ${submission.status}, required: ${SUBMISSION_STATUS.PENDING_REVIEW}`,
+        currentStatus: submission.status,
+        requiredStatus: SUBMISSION_STATUS.PENDING_REVIEW
+      });
     }
     
     await submission.changeStatus(SUBMISSION_STATUS.IN_PROGRESS, req.user, notes || 'Moved to in progress for review');
+    
+    console.log(`✅ Successfully moved submission to in progress`);
     
     res.json({
       success: true,
@@ -203,7 +220,12 @@ router.post('/:id/move-to-progress', requireReviewer, validateObjectId('id'), as
       }
     });
   } catch (error) {
-    res.status(500).json({ message: 'Error moving submission to in progress', error: error.message });
+    console.error(`💥 Error in move-to-progress for ID ${req.params.id}:`, error);
+    res.status(500).json({ 
+      message: 'Error moving submission to in progress', 
+      details: error.message,
+      submissionId: req.params.id
+    });
   }
 });
 

@@ -73,7 +73,6 @@ router.post('/users', async (req, res) => {
       bio: bio || '', // Include bio field
       password: hashedPassword,
       role: userRole, // Use validated role
-      needsProfileCompletion: false,
       isEmailVerified: true
     });
 

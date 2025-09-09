@@ -60,10 +60,6 @@ const validateUserUpdate = [
         throw new Error('Profile image URL must be valid');
       }
     }),
-  body('profileCompleted')
-    .optional()
-    .isBoolean()
-    .withMessage('Profile completed must be a boolean value'),
   body('socialLinks.website')
     .optional()
     .isURL()

@@ -12,14 +12,25 @@ router.post('/register', validateUserRegistration, async (req, res) => {
     res.status(201).json({
       message: 'User registered successfully',
       user: result.user.toAuthJSON(),
-      token: result.token,
-      needsProfileCompletion: result.user.needsProfileCompletion || false
+      token: result.token
     });
   } catch (error) {
     if (error.message.includes('already exists')) {
-      return res.status(409).json({ message: error.message });
+      return res.status(409).json({ 
+        message: error.message,
+        details: 'A user with this email or username already exists. Please try logging in instead.'
+      });
     }
-    res.status(500).json({ message: 'Registration failed', error: error.message });
+    if (error.message.includes('validation')) {
+      return res.status(400).json({ 
+        message: 'Invalid user data provided',
+        details: error.message 
+      });
+    }
+    res.status(500).json({ 
+      message: 'Registration failed', 
+      details: error.message 
+    });
   }
 });
 
@@ -30,20 +41,25 @@ router.post('/login', validateLogin, async (req, res) => {
     res.json({
       message: 'Login successful',
       user: result.user.toAuthJSON(),
-      token: result.token,
-      needsProfileCompletion: result.user.needsProfileCompletion || false
+      token: result.token
     });
   } catch (error) {
     if (error.message === 'Invalid credentials') {
-      return res.status(401).json({ message: error.message });
+      return res.status(401).json({ 
+        message: error.message,
+        details: 'Please check your email and password and try again.'
+      });
     }
-    res.status(500).json({ message: 'Login failed', error: error.message });
+    res.status(500).json({ 
+      message: 'Login failed', 
+      details: error.message 
+    });
   }
 });
 
 // POST /api/auth/google-login - Authenticate existing Google user or register new user
 router.post('/google-login', async (req, res) => {
-  const { email, name, picture, given_name, family_name } = req.body;
+  const { email, name, picture } = req.body;
 
   if (!email || !name) {
     return res.status(400).json({ message: 'Email and name are required' });
@@ -93,19 +109,53 @@ router.post('/google-login', async (req, res) => {
         profileImage: picture || ''
       };
 
-      const result = await UserService.registerUser(userData);
-      
-      res.status(201).json({
-        message: 'Google user registered successfully',
-        user: result.user.toAuthJSON(),
-        token: result.token,
-      });
+      try {
+        const result = await UserService.registerUser(userData);
+        
+        res.status(201).json({
+          message: 'Google user registered successfully',
+          user: result.user.toAuthJSON(),
+          token: result.token,
+        });
+      } catch (registrationError) {
+        // If registration fails due to user existing (race condition), try to login
+        if (registrationError.message.includes('already exists')) {
+          const existingUser = await User.findByEmail(email);
+          if (existingUser) {
+            const { generateToken } = require('../middleware/auth');
+            const token = generateToken(existingUser._id);
+            
+            return res.json({
+              message: 'Google user authenticated successfully',
+              user: existingUser.toAuthJSON(),
+              token,
+            });
+          }
+        }
+        throw registrationError; // Re-throw if it's a different error
+      }
     }
   } catch (error) {
     console.error('Google authentication error:', error);
+    
+    // Return detailed error messages based on error type
+    if (error.message.includes('already exists')) {
+      return res.status(409).json({ 
+        message: 'Account registration failed - user already exists', 
+        details: error.message 
+      });
+    }
+    
+    if (error.message.includes('validation')) {
+      return res.status(400).json({ 
+        message: 'Invalid user data provided', 
+        details: error.message 
+      });
+    }
+    
     res.status(500).json({ 
       message: 'Google authentication failed', 
-      error: error.message 
+      details: error.message 
     });
   }
 });

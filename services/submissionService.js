@@ -138,6 +138,7 @@ class SubmissionService {
         seo: sub.seo,
         author: {
           _id: sub.userId._id,
+          id: sub.userId._id,
           name: sub.userId.name,
           username: sub.userId.username,
           profileImage: sub.userId.profileImage
@@ -194,8 +195,12 @@ class SubmissionService {
       title: populatedSubmission.title,
       description: populatedSubmission.description,
       submissionType: populatedSubmission.submissionType,
-      authorName: populatedSubmission.userId.username,
-      authorId: populatedSubmission.userId._id,
+      author: {
+        _id: populatedSubmission.userId._id,
+        id: populatedSubmission.userId._id,
+        name: populatedSubmission.userId.name,
+        username: populatedSubmission.userId.username
+      },
       publishedAt: populatedSubmission.reviewedAt || populatedSubmission.createdAt,
       readingTime: populatedSubmission.readingTime,
       imageUrl: populatedSubmission.imageUrl,
@@ -375,6 +380,7 @@ class SubmissionService {
         seo: sub.seo,
         author: {
           _id: sub.userId._id,
+          id: sub.userId._id,
           name: sub.userId.name,
           username: sub.userId.username,
           profileImage: sub.userId.profileImage
