@@ -5,19 +5,57 @@ const { GetObjectCommand, DeleteObjectCommand, CopyObjectCommand } = require('@a
 const sharp = require('sharp');
 const { v4: uuidv4 } = require('uuid');
 
-// S3 Client Configuration
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION || 'us-east-1',
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  },
-});
+// S3 Client Configuration with validation
+let s3Client;
+let credentialsValid = false;
+
+try {
+  // Validate required AWS credentials
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const region = process.env.AWS_REGION || 'us-east-1';
+  
+  if (!accessKeyId || !secretAccessKey) {
+    console.warn('⚠️  AWS credentials not found in environment variables');
+    console.warn('🔧 Required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY');
+    throw new Error('Missing AWS credentials');
+  }
+  
+  if (accessKeyId === 'your-aws-access-key' || secretAccessKey === 'your-aws-secret-key') {
+    console.warn('⚠️  AWS credentials appear to be placeholder values');
+    throw new Error('AWS credentials contain placeholder values');
+  }
+  
+  s3Client = new S3Client({
+    region,
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+    },
+  });
+  
+  credentialsValid = true;
+  console.log('✅ AWS S3 Client initialized successfully');
+  console.log(`🔧 Region: ${region}`);
+  console.log(`🔧 Access Key: ${accessKeyId.substring(0, 4)}***`);
+  
+} catch (error) {
+  console.warn('❌ Failed to initialize AWS S3 Client:', error.message);
+  console.warn('🔧 S3 upload functionality will be unavailable');
+  s3Client = null;
+}
 
 const BUCKET_NAME = process.env.S3_BUCKET_NAME || 'poems-india-images';
 const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN; // Optional CDN domain
 
 class S3ImageService {
+  /**
+   * Check if S3 service is available and properly configured
+   */
+  static isAvailable() {
+    return s3Client !== null && credentialsValid;
+  }
+
   /**
    * Upload image to S3 with optimization
    * @param {Buffer} imageBuffer - Image buffer
@@ -26,6 +64,14 @@ class S3ImageService {
    * @returns {Promise<Object>} Upload result with URL
    */
   static async uploadImage(imageBuffer, originalName, options = {}) {
+    // Check if S3 service is available before attempting upload
+    if (!this.isAvailable()) {
+      return {
+        success: false,
+        error: 'AWS S3 service is not available - credentials not properly configured'
+      };
+    }
+
     try {
       const {
         quality = 80,
