@@ -1208,18 +1208,7 @@ router.get('/trending', validatePagination, async (req, res) => {
   }
 });
 
-// GET /api/submissions/:id - Get submission by ID
-router.get('/:id', validateObjectId('id'), async (req, res) => {
-  try {
-    const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
-    res.json({ submission });
-  } catch (error) {
-    if (error.message === 'Submission not found') {
-      return res.status(404).json({ message: error.message });
-    }
-    res.status(500).json({ message: 'Error fetching submission', error: error.message });
-  }
-});
+// MOVED: Generic /:id route moved to end to avoid conflicts with specific routes like /explore
 
 // GET /api/submissions/:id/contents - Get submission with contents
 router.get('/:id/contents', authenticateUser, validateObjectId('id'), async (req, res) => {
@@ -2473,5 +2462,17 @@ router.get('/analytics/performance', requireReviewer, async (req, res) => {
   }
 });
 
+// GET /api/submissions/:id - Get submission by ID (MOVED TO END to avoid conflicts with /explore)
+router.get('/:id', validateObjectId('id'), async (req, res) => {
+  try {
+    const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
+    res.json({ submission });
+  } catch (error) {
+    if (error.message === 'Submission not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error fetching submission', error: error.message });
+  }
+});
 
 module.exports = router;
