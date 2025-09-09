@@ -530,6 +530,11 @@ class SubmissionService {
       }
     };
 
+    // Preserve existing imageUrl if it exists
+    if (submission.imageUrl) {
+      updateData.imageUrl = submission.imageUrl;
+    }
+
     const updatedSubmission = await Submission.findByIdAndUpdate(id, updateData, { new: true });
     return updatedSubmission;
   }
