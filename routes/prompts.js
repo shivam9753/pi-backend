@@ -1,10 +1,14 @@
 // routes/prompts.js
 const express = require('express');
 const router = express.Router();
-// UUID validation helper since we use UUIDs instead of ObjectIds
-const isValidUUID = (str) => {
+// ID validation helper - supports both UUID and MongoDB ObjectId formats for backward compatibility
+const isValidId = (str) => {
+  // UUID format (primary)
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(str);
+  // MongoDB ObjectId format (backward compatibility)
+  const objectIdRegex = /^[0-9a-fA-F]{24}$/;
+  
+  return uuidRegex.test(str) || objectIdRegex.test(str);
 };
 const { authenticateUser, requireRole } = require('../middleware/auth');
 const {
@@ -28,9 +32,7 @@ router.get('/', async (req, res) => {
     const collection = db.collection(COLLECTION_NAME);
     
     const {
-      type,
       search,
-      featured,
       popular,
       limit = 20,
       page = 1,
@@ -43,7 +45,7 @@ router.get('/', async (req, res) => {
 
     // Handle search with text index
     if (search) {
-      const searchPipeline = getSearchAggregation(search, type, parseInt(limit));
+      const searchPipeline = getSearchAggregation(search, parseInt(limit));
       prompts = await collection.aggregate(searchPipeline).toArray();
       return res.json({
         success: true,
@@ -55,7 +57,7 @@ router.get('/', async (req, res) => {
 
     // Handle popular prompts
     if (popular === 'true') {
-      const popularPipeline = getPopularPromptsAggregation(type, parseInt(limit));
+      const popularPipeline = getPopularPromptsAggregation(parseInt(limit));
       prompts = await collection.aggregate(popularPipeline).toArray();
       return res.json({
         success: true,
@@ -65,36 +67,9 @@ router.get('/', async (req, res) => {
       });
     }
 
-    // Handle featured prompts
-    if (featured === 'true') {
-      const query = buildPromptsQuery({ type, featured: true });
-      prompts = await collection
-        .find(query)
-        .sort(buildSortOptions('createdAt', 'desc'))
-        .limit(parseInt(limit))
-        .toArray();
-      
-      // Populate user info for featured prompts
-      for (let prompt of prompts) {
-        if (prompt.createdBy) {
-          const user = await db.collection('users').findOne(
-            { _id: prompt.createdBy },
-            { projection: { name: 1, email: 1 } }
-          );
-          prompt.createdBy = user;
-        }
-      }
-      
-      return res.json({
-        success: true,
-        data: prompts.map(formatPromptResponse),
-        total: prompts.length,
-        featured: true
-      });
-    }
 
     // Regular filtering and pagination
-    const query = buildPromptsQuery({ type });
+    const query = buildPromptsQuery({});
     const sort = buildSortOptions(sortBy, sortOrder);
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
@@ -139,14 +114,14 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/all', async (req, res) => {
+router.get('/all', authenticateUser, requireRole(['admin']), async (req, res) => {
   try {
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    // Get all active prompts
+    // Get all prompts (for admin interface)
     const prompts = await collection
-      .find({ isActive: true })
+      .find({})
       .sort({ createdAt: -1 })
       .toArray();
 
@@ -183,7 +158,7 @@ router.get('/:id', async (req, res) => {
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    if (!isValidUUID(req.params.id)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid prompt ID'
@@ -245,8 +220,8 @@ router.post('/', authenticateUser, requireRole(['admin']), async (req, res) => {
     // Insert into database
     const result = await collection.insertOne(promptDoc);
     
-    // Get the created prompt with user info
-    const createdPrompt = await collection.findOne({ _id: result.insertedId });
+    // Get the created prompt with user info (use our custom _id)
+    const createdPrompt = await collection.findOne({ _id: promptDoc._id });
     const user = await db.collection('users').findOne(
       { _id: createdPrompt.createdBy },
       { projection: { name: 1, email: 1 } }
@@ -275,7 +250,7 @@ router.put('/:id', authenticateUser, requireRole(['admin']), async (req, res) =>
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    if (!isValidUUID(req.params.id)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid prompt ID'
@@ -340,7 +315,7 @@ router.delete('/:id', authenticateUser, requireRole(['admin']), async (req, res)
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    if (!isValidUUID(req.params.id)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid prompt ID'
@@ -371,55 +346,6 @@ router.delete('/:id', authenticateUser, requireRole(['admin']), async (req, res)
   }
 });
 
-// POST /api/prompts/:id/use - Increment usage count
-router.post('/:id/use', async (req, res) => {
-  try {
-    const db = getDB();
-    const collection = db.collection(COLLECTION_NAME);
-    
-    if (!isValidUUID(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid prompt ID'
-      });
-    }
-
-    const result = await collection.updateOne(
-      { _id: req.params.id },
-      { 
-        $inc: { usageCount: 1 },
-        $set: { updatedAt: new Date() }
-      }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Prompt not found'
-      });
-    }
-
-    // Get updated usage count
-    const prompt = await collection.findOne(
-      { _id: req.params.id },
-      { projection: { usageCount: 1 } }
-    );
-
-    res.json({
-      success: true,
-      message: 'Usage count updated',
-      usageCount: prompt.usageCount
-    });
-
-  } catch (error) {
-    console.error('Error updating usage count:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating usage count',
-      error: error.message
-    });
-  }
-});
 
 // GET /api/prompts/stats/overview - Get prompt statistics (Admin only)
 router.get('/stats/overview', authenticateUser, requireRole(['admin']), async (req, res) => {
@@ -434,8 +360,6 @@ router.get('/stats/overview', authenticateUser, requireRole(['admin']), async (r
     const formattedStats = {
       totalPrompts: stats.totalActive[0]?.count || 0,
       totalInactive: stats.totalInactive[0]?.count || 0,
-      featuredPrompts: stats.featuredCount[0]?.count || 0,
-      typeStats: stats.typeStats || [],
       topUsed: stats.topUsed || []
     };
 
@@ -460,7 +384,7 @@ router.patch('/:id/toggle-status', authenticateUser, requireRole(['admin']), asy
     const db = getDB();
     const collection = db.collection(COLLECTION_NAME);
     
-    if (!isValidUUID(req.params.id)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid prompt ID'
@@ -503,6 +427,7 @@ router.patch('/:id/toggle-status', authenticateUser, requireRole(['admin']), asy
     });
   }
 });
+
 
 
 

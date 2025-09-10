@@ -4,16 +4,12 @@ const Review = require('../models/Review');
 const SubmissionService = require('../services/submissionService');
 const { authenticateUser, requireReviewer, requireWriter, requireAdmin } = require('../middleware/auth');
 const { 
-  validateReviewCreation,
   validateObjectId,
   validatePagination 
 } = require('../middleware/validation');
 const { 
   SUBMISSION_STATUS, 
-  REVIEW_ACTIONS, 
   STATUS_ARRAYS,
-  ACTION_STATUS_MAP,
-  STATUS_UTILS 
 } = require('../constants/status.constants');
 
 const router = express.Router();
@@ -229,71 +225,6 @@ router.post('/:id/move-to-progress', requireReviewer, validateObjectId('id'), as
   }
 });
 
-// POST /api/reviews/:id/action - Unified review action endpoint
-router.post('/:id/action', requireReviewer, validateObjectId('id'), async (req, res) => {
-  try {
-    const { action, reviewNotes, rating } = req.body;
-    
-    // Validate action
-    const validActions = ['approve', 'reject', 'revision', 'shortlist'];
-    if (!action || !validActions.includes(action)) {
-      return res.status(400).json({ 
-        message: `Invalid action. Must be one of: ${validActions.join(', ')}` 
-      });
-    }
-    
-    // Validate required fields based on action
-    if ((action === 'reject' || action === 'revision') && (!reviewNotes || reviewNotes.trim().length === 0)) {
-      return res.status(400).json({ 
-        message: `Review notes are required when ${action === 'reject' ? 'rejecting' : 'requesting revision for'} a submission` 
-      });
-    }
-    
-    // Map action to status using constants
-    const statusMap = ACTION_STATUS_MAP;
-    
-    const reviewData = {
-      reviewerId: req.user._id,
-      status: statusMap[action],
-      reviewNotes: reviewNotes ? reviewNotes.trim() : '',
-      rating: rating
-    };
-
-    let result;
-    let message;
-    
-    if (action === 'approve') {
-      // Create the review record first
-      result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
-      // Then update submission status with history tracking
-      await result.submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user, reviewNotes || 'Submission approved');
-      message = 'Submission approved successfully';
-    } else if (action === 'shortlist') {
-      // For shortlist: Create review first, then update status
-      result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
-      // Then update submission status with history tracking
-      await result.submission.changeStatus(SUBMISSION_STATUS.SHORTLISTED, req.user, reviewNotes || 'Submission shortlisted for further review');
-      message = 'Submission shortlisted successfully';
-    } else {
-      // For reject/revision: Create review first, then update status
-      result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
-      // Then update submission status with history tracking
-      await result.submission.changeStatus(statusMap[action], req.user, reviewNotes.trim());
-      message = action === 'reject' ? 'Submission rejected' : 'Revision requested';
-    }
-    
-    res.json({
-      message,
-      submission: result.submission,
-      review: result.review
-    });
-  } catch (error) {
-    if (error.message === 'Submission not found' || error.message.includes('pending submissions')) {
-      return res.status(400).json({ message: error.message });
-    }
-    res.status(500).json({ message: `Error ${req.body.action}ing submission`, error: error.message });
-  }
-});
 
 // NEW SEMANTIC REVIEW ENDPOINTS - No action parameter required
 // These replace the generic POST /:id/action for better API semantics
@@ -427,27 +358,6 @@ router.post('/:id/shortlist', requireReviewer, validateObjectId('id'), async (re
 // LEGACY ENDPOINTS REMOVED - Use semantic endpoints above instead
 // These endpoints have been consolidated into the unified action endpoint for better maintainability
 
-// GET /api/reviews/my-reviews - Get reviews by current user
-router.get('/my-reviews', requireReviewer, validatePagination, async (req, res) => {
-  try {
-    const { limit = 50, skip = 0 } = req.query;
-    
-    const reviews = await Review.findByReviewerId(req.user._id, { limit, skip });
-    const total = await Review.countDocuments({ reviewerId: req.user._id });
-    
-    res.json({
-      reviews,
-      total,
-      pagination: {
-        limit: parseInt(limit),
-        skip: parseInt(skip),
-        hasMore: (parseInt(skip) + parseInt(limit)) < total
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching your reviews', error: error.message });
-  }
-});
 
 // GET /api/reviews/submission/:id - Get reviews for a specific submission
 router.get('/submission/:id', requireWriter, validateObjectId('id'), async (req, res) => {
@@ -464,74 +374,7 @@ router.get('/submission/:id', requireWriter, validateObjectId('id'), async (req,
   }
 });
 
-// GET /api/reviews/stats - Get review statistics
-router.get('/stats', requireWriter, async (req, res) => {
-  try {
-    const { reviewerId } = req.query;
-    
-    // If reviewerId is provided and user is admin, get stats for that reviewer
-    // Otherwise, get stats for current user
-    const targetReviewerId = (reviewerId && req.user.role === 'admin') ? reviewerId : req.user._id;
-    
-    const stats = await Review.aggregate([
-      { $match: { reviewerId: targetReviewerId } },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
 
-    const formattedStats = {
-      accepted: 0,
-      rejected: 0,
-      needs_revision: 0,
-      total: 0
-    };
-
-    stats.forEach(stat => {
-      formattedStats[stat._id] = stat.count;
-      formattedStats.total += stat.count;
-    });
-
-    res.json({ stats: formattedStats });
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching review stats', error: error.message });
-  }
-});
-
-// GET /api/reviews - Get all reviews (admin only)
-router.get('/', requireAdmin, validatePagination, async (req, res) => {
-  try {
-    const { limit = 50, skip = 0, reviewerId, status } = req.query;
-    
-    const query = {};
-    if (reviewerId) query.reviewerId = reviewerId;
-    if (status) query.status = status;
-    
-    const reviews = await Review.find(query)
-      .populate('reviewerId', 'username email')
-      .populate('submissionId', 'title submissionType')
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip));
-
-    const total = await Review.countDocuments(query);
-    
-    res.json({
-      reviews,
-      total,
-      pagination: {
-        limit: parseInt(limit),
-        skip: parseInt(skip),
-        hasMore: (parseInt(skip) + parseInt(limit)) < total
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching reviews', error: error.message });
-  }
-});
 
 // DELETE /api/reviews/:id - Delete review (admin only)
 router.delete('/:id', requireAdmin, validateObjectId('id'), async (req, res) => {

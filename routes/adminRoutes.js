@@ -119,27 +119,6 @@ router.get('/users', async (req, res) => {
   }
 });
 
-// Get all submissions with author info
-router.get('/submissions/all', async (req, res) => {
-  try {
-    const submissions = await Submission.find({})
-      .populate('userId', 'name username email')
-      .populate('reviewedBy', 'username')
-      .sort({ createdAt: -1 });
-
-    res.json({
-      success: true,
-      submissions
-    });
-
-  } catch (error) {
-    console.error('Get all submissions error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
-    });
-  }
-});
 
 // Reassign submission to different user
 router.put('/submissions/:id/reassign', async (req, res) => {

@@ -149,66 +149,6 @@ router.get('/:id/submission-history', validateObjectId('id'), async (req, res) =
   }
 });
 
-// POST /api/users/:id/approve - Consolidated approval endpoint (admin only)
-router.post('/:id/approve', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
-  try {
-    const { type, approvedBio } = req.body;
-    
-    if (!type || !['bio', 'profileImage'].includes(type)) {
-      return res.status(400).json({ 
-        message: 'Invalid approval type. Must be "bio" or "profileImage"' 
-      });
-    }
-    
-    let user;
-    let message;
-    
-    if (type === 'bio') {
-      if (!approvedBio) {
-        return res.status(400).json({ message: 'approvedBio is required for bio approval' });
-      }
-      user = await UserService.approveUserBio(req.params.id, approvedBio, req.user.userId);
-      message = 'Bio approved successfully';
-    } else if (type === 'profileImage') {
-      user = await UserService.approveUserProfileImage(req.params.id, req.user.userId);
-      message = 'Profile image approved successfully';
-    }
-    
-    res.json({ message, user });
-  } catch (error) {
-    if (error.message === 'User not found') {
-      return res.status(404).json({ message: error.message });
-    }
-    res.status(500).json({ message: `Error approving ${req.body.type}`, error: error.message });
-  }
-});
-
-// LEGACY: POST /api/users/:id/approve-bio - Approve user bio (admin only) - DEPRECATED
-router.post('/:id/approve-bio', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
-  try {
-    const { approvedBio } = req.body;
-    const user = await UserService.approveUserBio(req.params.id, approvedBio, req.user.userId);
-    res.json({ message: 'Bio approved successfully', user });
-  } catch (error) {
-    if (error.message === 'User not found') {
-      return res.status(404).json({ message: error.message });
-    }
-    res.status(500).json({ message: 'Error approving bio', error: error.message });
-  }
-});
-
-// LEGACY: POST /api/users/:id/approve-profile-image - Approve user profile image (admin only) - DEPRECATED
-router.post('/:id/approve-profile-image', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
-  try {
-    const user = await UserService.approveUserProfileImage(req.params.id, req.user.userId);
-    res.json({ message: 'Profile image approved successfully', user });
-  } catch (error) {
-    if (error.message === 'User not found') {
-      return res.status(404).json({ message: error.message });
-    }
-    res.status(500).json({ message: 'Error approving profile image', error: error.message });
-  }
-});
 
 // GET /api/users/:id/published-works - Get user's published works
 router.get('/:id/published-works', validateObjectId('id'), validatePagination, async (req, res) => {

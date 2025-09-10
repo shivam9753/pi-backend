@@ -1,5 +1,6 @@
 // utils/promptHelpers.js
 const { ObjectId } = require('mongodb');
+const { v4: uuidv4 } = require('uuid');
 
 // Collection name
 const COLLECTION_NAME = 'prompts';
@@ -24,14 +25,6 @@ const validatePrompt = (promptData) => {
     errors.push('Description must be 1000 characters or less');
   }
   
-  if (!promptData.type || !['poem', 'prose', 'article', 'cinema_essay'].includes(promptData.type)) {
-    errors.push('Valid type is required (poem, prose, article, cinema_essay)');
-  }
-  
-  if (promptData.difficulty && !['beginner', 'intermediate', 'advanced'].includes(promptData.difficulty)) {
-    errors.push('Difficulty must be beginner, intermediate, or advanced');
-  }
-  
   return errors;
 };
 
@@ -40,14 +33,12 @@ const createPromptDoc = (promptData, userId) => {
   const now = new Date();
   
   return {
+    _id: uuidv4(), // Generate string UUID for _id
     title: promptData.title.trim(),
     description: promptData.description.trim(),
-    type: promptData.type,
     tags: promptData.tags ? promptData.tags.map(tag => tag.trim().toLowerCase()) : [],
-    difficulty: promptData.difficulty || 'beginner',
     picture: promptData.picture || null,
     isActive: promptData.isActive !== undefined ? promptData.isActive : true,
-    featured: promptData.featured || false,
     createdBy: userId,
     usageCount: 0,
     createdAt: now,
@@ -61,12 +52,9 @@ const updatePromptDoc = (existingPrompt, updateData) => {
   
   if (updateData.title !== undefined) updatedPrompt.title = updateData.title.trim();
   if (updateData.description !== undefined) updatedPrompt.description = updateData.description.trim();
-  if (updateData.type !== undefined) updatedPrompt.type = updateData.type;
   if (updateData.tags !== undefined) updatedPrompt.tags = updateData.tags.map(tag => tag.trim().toLowerCase());
-  if (updateData.difficulty !== undefined) updatedPrompt.difficulty = updateData.difficulty;
   if (updateData.picture !== undefined) updatedPrompt.picture = updateData.picture;
   if (updateData.isActive !== undefined) updatedPrompt.isActive = updateData.isActive;
-  if (updateData.featured !== undefined) updatedPrompt.featured = updateData.featured;
   
   updatedPrompt.updatedAt = new Date();
   
@@ -76,14 +64,6 @@ const updatePromptDoc = (existingPrompt, updateData) => {
 // Build query for prompts
 const buildPromptsQuery = (filters = {}) => {
   const query = { isActive: true };
-  
-  if (filters.type) {
-    query.type = filters.type;
-  }
-  
-  if (filters.featured !== undefined) {
-    query.featured = filters.featured;
-  }
   
   if (filters.search) {
     query.$text = { $search: filters.search };
@@ -112,12 +92,11 @@ const formatPromptResponse = (prompt) => {
 };
 
 // Aggregation pipeline for popular prompts
-const getPopularPromptsAggregation = (type = null, limit = 10) => {
+const getPopularPromptsAggregation = (limit = 10) => {
   const pipeline = [];
   
   // Match stage
   const matchStage = { isActive: true };
-  if (type) matchStage.type = type;
   pipeline.push({ $match: matchStage });
   
   // Sort by usage count and creation date
@@ -144,7 +123,7 @@ const getPopularPromptsAggregation = (type = null, limit = 10) => {
 };
 
 // Aggregation pipeline for search with text score
-const getSearchAggregation = (searchText, type = null, limit = 20) => {
+const getSearchAggregation = (searchText, limit = 20) => {
   const pipeline = [];
   
   // Match stage with text search
@@ -152,7 +131,6 @@ const getSearchAggregation = (searchText, type = null, limit = 20) => {
     isActive: true,
     $text: { $search: searchText }
   };
-  if (type) matchStage.type = type;
   pipeline.push({ $match: matchStage });
   
   // Add text score
@@ -194,19 +172,11 @@ const getStatsAggregation = () => {
           { $match: { isActive: false } },
           { $count: 'count' }
         ],
-        featuredCount: [
-          { $match: { isActive: true, featured: true } },
-          { $count: 'count' }
-        ],
-        typeStats: [
-          { $match: { isActive: true } },
-          { $group: { _id: '$type', count: { $sum: 1 } } }
-        ],
         topUsed: [
           { $match: { isActive: true } },
           { $sort: { usageCount: -1 } },
           { $limit: 5 },
-          { $project: { title: 1, usageCount: 1, type: 1 } }
+          { $project: { title: 1, usageCount: 1 } }
         ]
       }
     }
@@ -223,8 +193,7 @@ const setupTextIndex = async (db) => {
     });
     
     // Create other useful indexes
-    await db.collection(COLLECTION_NAME).createIndex({ type: 1, isActive: 1 });
-    await db.collection(COLLECTION_NAME).createIndex({ featured: 1, isActive: 1 });
+    await db.collection(COLLECTION_NAME).createIndex({ isActive: 1 });
     await db.collection(COLLECTION_NAME).createIndex({ createdAt: -1 });
     await db.collection(COLLECTION_NAME).createIndex({ usageCount: -1 });
     

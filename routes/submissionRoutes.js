@@ -34,6 +34,55 @@ const upload = multer({
 });
 
 // ========================================
+// DEBUG ENDPOINT - TEMPORARY
+// ========================================
+
+// GET /api/submissions/debug-count - Check actual database counts
+router.get('/debug-count', authenticateUser, async (req, res) => {
+  try {
+    console.log('🔍 Database Debug Count Check:');
+    
+    // Count all submissions
+    const totalSubmissions = await Submission.countDocuments({});
+    console.log('- Total submissions in database:', totalSubmissions);
+    
+    // Count by each status
+    const statusCounts = await Submission.aggregate([
+      { $group: { _id: '$status', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    console.log('- Status breakdown:', statusCounts);
+    
+    // Count review queue submissions
+    const reviewQueueQuery = {
+      status: { $in: ['pending_review', 'in_progress', 'shortlisted', 'resubmitted'] }
+    };
+    const reviewQueueCount = await Submission.countDocuments(reviewQueueQuery);
+    console.log('- Review queue count:', reviewQueueCount);
+    
+    // Get sample review queue submissions to check their actual data
+    const sampleSubmissions = await Submission.find(reviewQueueQuery)
+      .select('title status createdAt')
+      .limit(5)
+      .sort({ createdAt: -1 });
+    console.log('- Sample review queue submissions:', sampleSubmissions);
+    
+    res.json({
+      success: true,
+      debug: {
+        totalSubmissions,
+        statusCounts,
+        reviewQueueCount,
+        sampleSubmissions
+      }
+    });
+  } catch (error) {
+    console.error('Debug count error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
 // NEW OPTIMIZED LIGHTWEIGHT ENDPOINTS
 // ========================================
 
@@ -79,13 +128,23 @@ router.get('/review-queue', authenticateUser, requireReviewer, validatePaginatio
           as: 'author'
         }
       },
-      { $unwind: '$author' },
+      { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
       {
         $lookup: {
           from: 'submissions',
-          let: { authorId: '$author._id' },
+          let: { authorId: { $ifNull: ['$author._id', null] } },
           pipeline: [
-            { $match: { $expr: { $eq: ['$userId', '$$authorId'] }, status: 'published' } },
+            { 
+              $match: { 
+                $expr: { 
+                  $and: [
+                    { $ne: ['$$authorId', null] },
+                    { $eq: ['$userId', '$$authorId'] }
+                  ]
+                }, 
+                status: 'published' 
+              } 
+            },
             { $count: 'publishedCount' }
           ],
           as: 'authorStats'
@@ -94,7 +153,11 @@ router.get('/review-queue', authenticateUser, requireReviewer, validatePaginatio
       {
         $addFields: {
           isNewAuthor: {
-            $eq: [{ $ifNull: [{ $arrayElemAt: ['$authorStats.publishedCount', 0] }, 0] }, 0]
+            $cond: {
+              if: { $eq: ['$author._id', null] },
+              then: false, // Submissions without authors are not considered "new author"
+              else: { $eq: [{ $ifNull: [{ $arrayElemAt: ['$authorStats.publishedCount', 0] }, 0] }, 0] }
+            }
           },
           isUrgent: {
             $or: [
@@ -148,16 +211,41 @@ router.get('/review-queue', authenticateUser, requireReviewer, validatePaginatio
       pipeline.push({ $match: { hasTopicPitch: true } });
     }
 
-    // Add sorting
+    // Create count pipeline BEFORE adding pagination
+    const countPipeline = [...pipeline];
+    countPipeline.push({ $count: "total" });
+    
+    // Add sorting to main pipeline
     const sortOrder = order === 'asc' ? 1 : -1;
     pipeline.push({ $sort: { [sortBy]: sortOrder } });
 
-    // Add pagination
+    // Add pagination to main pipeline
     pipeline.push({ $skip: parseInt(skip) });
     pipeline.push({ $limit: parseInt(limit) });
 
-    const submissions = await Submission.aggregate(pipeline);
-    const total = await Submission.countDocuments(query);
+    // Execute both pipelines
+    const [submissions, countResult] = await Promise.all([
+      Submission.aggregate(pipeline),
+      Submission.aggregate(countPipeline)
+    ]);
+    
+    const total = countResult.length > 0 ? countResult[0].total : 0;
+    
+    // Debug logging
+    console.log('🔍 Debug Pagination:');
+    console.log('- Submissions returned:', submissions.length);
+    console.log('- Count result:', countResult);
+    console.log('- Total calculated:', total);
+    console.log('- Original query:', JSON.stringify(query));
+    console.log('- Applied filters: urgent=', urgent, 'newAuthor=', newAuthor, 'quickRead=', quickRead);
+    
+    // Debug: Test simple count without aggregation
+    const simpleCount = await Submission.countDocuments(query);
+    console.log('- Simple countDocuments:', simpleCount);
+    
+    // Debug: Show count pipeline structure
+    console.log('- Count pipeline length:', countPipeline.length);
+    console.log('- Count pipeline:', JSON.stringify(countPipeline, null, 2));
 
     res.json({
       success: true,
@@ -221,7 +309,7 @@ router.get('/publish-queue', authenticateUser, requireReviewer, validatePaginati
           as: 'author'
         }
       },
-      { $unwind: '$author' },
+      { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
       {
         $project: {
           _id: 1,
@@ -318,7 +406,7 @@ router.get('/explore', validatePagination, async (req, res) => {
           as: 'author'
         }
       },
-      { $unwind: '$author' },
+      { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
       {
         $project: {
           _id: 1,
@@ -392,338 +480,9 @@ router.get('/explore', validatePagination, async (req, res) => {
   }
 });
 
-// GET /api/submissions/:id/review-data - Complete review data (optimized)
-router.get('/:id/review-data', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
-  try {
-    // Get submission with complete data needed for review
-    const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
-    
-    if (!submission) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Submission not found' 
-      });
-    }
 
-    // Get review history
-    const reviews = await Review.find({ submissionId: req.params.id })
-      .populate('reviewerId', 'name username')
-      .sort({ createdAt: -1 })
-      .lean();
 
-    // Format response with everything needed for review workflow
-    res.json({
-      success: true,
-      submission: {
-        _id: submission._id,
-        title: submission.title,
-        description: submission.description,
-        submissionType: submission.submissionType,
-        status: submission.status,
-        createdAt: submission.createdAt,
-        updatedAt: submission.updatedAt,
-        readingTime: submission.readingTime,
-        wordCount: submission.wordCount,
-        imageUrl: submission.imageUrl,
-        excerpt: submission.excerpt,
-        topicPitchId: submission.topicPitchId,
-        userId: submission.userId
-      },
-      contents: submission.contents || [],
-      author: {
-        _id: submission.userId._id,
-        id: submission.userId._id,
-        name: submission.userId.name,
-        username: submission.userId.username,
-        email: submission.userId.email,
-        profileImage: submission.userId.profileImage,
-        bio: submission.userId.bio
-      },
-      reviewHistory: reviews.map(review => ({
-        _id: review._id,
-        status: review.status,
-        reviewNotes: review.reviewNotes,
-        rating: review.rating,
-        createdAt: review.createdAt,
-        reviewer: {
-          name: review.reviewerId.name,
-          username: review.reviewerId.username
-        }
-      }))
-    });
-  } catch (error) {
-    console.error('Error fetching review data:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching review data', 
-      error: error.message 
-    });
-  }
-});
 
-// GET /api/submissions/:id/publish-data - Complete publish data (optimized)
-router.get('/:id/publish-data', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
-  try {
-    // Get submission with complete data needed for publishing
-    const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
-    
-    if (!submission) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Submission not found' 
-      });
-    }
-
-    // Ensure submission is in accepted state
-    if (submission.status !== 'accepted') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Only accepted submissions can be published' 
-      });
-    }
-
-    // Get review history summary
-    const reviews = await Review.find({ submissionId: req.params.id })
-      .populate('reviewerId', 'name username')
-      .sort({ createdAt: -1 })
-      .limit(3) // Only get recent reviews for context
-      .lean();
-
-    // Format response with everything needed for publish workflow
-    res.json({
-      success: true,
-      submission: {
-        _id: submission._id,
-        title: submission.title,
-        description: submission.description,
-        submissionType: submission.submissionType,
-        status: submission.status,
-        createdAt: submission.createdAt,
-        acceptedAt: submission.reviewedAt,
-        readingTime: submission.readingTime,
-        wordCount: submission.wordCount,
-        imageUrl: submission.imageUrl,
-        excerpt: submission.excerpt,
-        seo: submission.seo || {}
-      },
-      contents: submission.contents || [],
-      author: {
-        _id: submission.userId._id,
-        name: submission.userId.name,
-        username: submission.userId.username,
-        email: submission.userId.email,
-        profileImage: submission.userId.profileImage
-      },
-      recentReviews: reviews.map(review => ({
-        status: review.status,
-        reviewNotes: review.reviewNotes,
-        rating: review.rating,
-        createdAt: review.createdAt,
-        reviewer: review.reviewerId.username
-      })),
-      suggestedSEO: {
-        slug: submission.seo?.slug || `${submission.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${submission.userId.username}`,
-        metaTitle: submission.seo?.metaTitle || submission.title,
-        metaDescription: submission.seo?.metaDescription || submission.excerpt || submission.description?.substring(0, 160),
-        keywords: submission.seo?.keywords || [],
-        ogImage: submission.seo?.ogImage || submission.imageUrl
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching publish data:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching publish data', 
-      error: error.message 
-    });
-  }
-});
-
-// GET /api/submissions/admin/purge-candidates - Admin purge management
-router.get('/admin/purge-candidates', authenticateUser, requireAdmin, validatePagination, async (req, res) => {
-  try {
-    const { 
-      limit = 50, 
-      skip = 0,
-      type,
-      daysOld = 30 
-    } = req.query;
-
-    // Build query for purge candidates (drafts and rejected older than specified days)
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - parseInt(daysOld));
-
-    const query = {
-      $or: [
-        { status: 'draft', createdAt: { $lt: cutoffDate } },
-        { status: 'rejected', updatedAt: { $lt: cutoffDate } }
-      ]
-    };
-
-    if (type && type !== 'all') {
-      query.submissionType = type;
-    }
-
-    // Build pipeline for purge data
-    const pipeline = [
-      { $match: query },
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'userId',
-          foreignField: '_id',
-          as: 'author'
-        }
-      },
-      { $unwind: '$author' },
-      {
-        $addFields: {
-          daysOld: {
-            $floor: {
-              $divide: [
-                { $subtract: [new Date(), '$updatedAt'] },
-                24 * 60 * 60 * 1000 // milliseconds in a day
-              ]
-            }
-          }
-        }
-      },
-      {
-        $project: {
-          _id: 1,
-          title: 1,
-          submissionType: 1,
-          status: 1,
-          createdAt: 1,
-          updatedAt: 1,
-          daysOld: 1,
-          author: {
-            _id: '$author._id',
-            name: '$author.name',
-            username: '$author.username'
-          }
-        }
-      },
-      { $sort: { updatedAt: 1 } }, // Oldest first
-      { $skip: parseInt(skip) },
-      { $limit: parseInt(limit) }
-    ];
-
-    const submissions = await Submission.aggregate(pipeline);
-    const total = await Submission.countDocuments(query);
-
-    res.json({
-      success: true,
-      submissions,
-      pagination: {
-        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
-        totalPages: Math.ceil(total / parseInt(limit)),
-        limit: parseInt(limit),
-        skip: parseInt(skip),
-        hasMore: (parseInt(skip) + parseInt(limit)) < total
-      },
-      total,
-      summary: {
-        drafts: await Submission.countDocuments({ status: 'draft', createdAt: { $lt: cutoffDate } }),
-        rejected: await Submission.countDocuments({ status: 'rejected', updatedAt: { $lt: cutoffDate } })
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching purge candidates:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching purge candidates', 
-      error: error.message 
-    });
-  }
-});
-
-// GET /api/submissions/:id/content-view - Public content view (optimized)
-router.get('/:id/content-view', validateObjectId('id'), async (req, res) => {
-  try {
-    // Get published submission by ID for public viewing
-    const submission = await Submission.findOne({ 
-      _id: req.params.id, 
-      status: 'published' 
-    })
-      .populate('userId', 'name username profileImage bio')
-      .lean();
-
-    if (!submission) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Published content not found' 
-      });
-    }
-
-    // Get content with manual population
-    const contents = await Submission.db.collection('contents').find({
-      _id: { $in: submission.contentIds.map(id => id.toString()) }
-    }).toArray();
-
-    // Get related posts (same type, different author)
-    const relatedPosts = await Submission.find({
-      status: 'published',
-      submissionType: submission.submissionType,
-      _id: { $ne: submission._id },
-      userId: { $ne: submission.userId._id }
-    })
-      .select('_id title excerpt imageUrl readingTime seo.slug')
-      .populate('userId', 'name username')
-      .limit(3)
-      .lean();
-
-    res.json({
-      success: true,
-      submission: {
-        _id: submission._id,
-        title: submission.title,
-        description: submission.description,
-        submissionType: submission.submissionType,
-        publishedAt: submission.reviewedAt,
-        readingTime: submission.readingTime,
-        viewCount: submission.viewCount || 0,
-        imageUrl: submission.imageUrl,
-        excerpt: submission.excerpt,
-        slug: submission.seo?.slug,
-        seo: submission.seo
-      },
-      contents: contents.map(content => ({
-        _id: content._id,
-        title: content.title,
-        body: content.body,
-        tags: content.tags || [],
-        footnotes: content.footnotes || ''
-      })),
-      author: {
-        _id: submission.userId._id,
-        name: submission.userId.name,
-        username: submission.userId.username,
-        profileImage: submission.userId.profileImage,
-        bio: submission.userId.bio
-      },
-      relatedPosts: relatedPosts.map(post => ({
-        _id: post._id,
-        title: post.title,
-        excerpt: post.excerpt,
-        imageUrl: post.imageUrl,
-        readingTime: post.readingTime,
-        slug: post.seo?.slug,
-        author: {
-          name: post.userId.name,
-          username: post.userId.username
-        }
-      }))
-    });
-  } catch (error) {
-    console.error('Error fetching content view:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching content view', 
-      error: error.message 
-    });
-  }
-});
 
 // ========================================
 // END OF NEW OPTIMIZED ENDPOINTS
@@ -974,13 +733,13 @@ router.get('/', validatePagination, async (req, res) => {
         readingTime: sub.readingTime,
         tags: sub.tags,
         slug: sub.seo?.slug,
-        authorName: sub.userId.name || sub.userId.username || 'Unknown',
+        authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
         author: {
-          _id: sub.userId._id,
-          name: sub.userId.name || sub.userId.username || 'Unknown',
-          username: sub.userId.username,
-          email: sub.userId.email,
-          profileImage: sub.userId.profileImage
+          _id: sub.userId?._id || null,
+          name: sub.userId?.name || sub.userId?.username || 'Unknown',
+          username: sub.userId?.username || null,
+          email: sub.userId?.email || null,
+          profileImage: sub.userId?.profileImage || null
         }
       }));
     } else if (status === 'published_and_draft') {
@@ -994,13 +753,13 @@ router.get('/', validatePagination, async (req, res) => {
         readingTime: sub.readingTime,
         tags: sub.tags,
         status: sub.status,
-        authorName: sub.userId.name || sub.userId.username || 'Unknown',
+        authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
         author: {
-          _id: sub.userId._id,
-          name: sub.userId.name || sub.userId.username || 'Unknown',
-          username: sub.userId.username,
-          email: sub.userId.email,
-          profileImage: sub.userId.profileImage
+          _id: sub.userId?._id || null,
+          name: sub.userId?.name || sub.userId?.username || 'Unknown',
+          username: sub.userId?.username || null,
+          email: sub.userId?.email || null,
+          profileImage: sub.userId?.profileImage || null
         },
         createdAt: sub.createdAt,
         reviewedAt: sub.reviewedAt,
@@ -1017,13 +776,13 @@ router.get('/', validatePagination, async (req, res) => {
         submissionType: sub.submissionType,
         tags: sub.tags,
         status: sub.status,
-        authorName: sub.userId.name || sub.userId.username || 'Unknown',
+        authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
         author: {
-          _id: sub.userId._id,
-          name: sub.userId.name || sub.userId.username || 'Unknown',
-          username: sub.userId.username,
-          email: sub.userId.email,
-          profileImage: sub.userId.profileImage
+          _id: sub.userId?._id || null,
+          name: sub.userId?.name || sub.userId?.username || 'Unknown',
+          username: sub.userId?.username || null,
+          email: sub.userId?.email || null,
+          profileImage: sub.userId?.profileImage || null
         },
         createdAt: sub.createdAt,
         reviewedAt: sub.reviewedAt

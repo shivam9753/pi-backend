@@ -8,79 +8,6 @@ const { mapSingleTag, filterUnmappedUuids, isUuidTag } = require('../utils/tagMa
 
 const router = express.Router();
 
-// GET /api/content/popular-tags - Get most popular tags from published content (MUST BE BEFORE CATCH-ALL)
-router.get('/popular-tags', validatePagination, async (req, res) => {
-  try {
-    const { limit = 10 } = req.query;
-    
-    // Get tags from published content (handling string/ObjectId mismatch)
-    const tagAggregation = await Content.aggregate([
-      // Join with submissions to filter only published content
-      // Handle the string submissionId to ObjectId conversion
-      {
-        $lookup: {
-          from: 'submissions',
-          let: { submissionIdStr: '$submissionId' },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: [{ $toString: '$_id' }, '$$submissionIdStr'] },
-                    { $eq: ['$status', 'published'] }
-                  ]
-                }
-              }
-            }
-          ],
-          as: 'submission'
-        }
-      },
-      // Only include content that has published submissions
-      { $match: { submission: { $ne: [] } } },
-      // Unwind tags array if it exists
-      { $unwind: { path: '$tags', preserveNullAndEmptyArrays: false } },
-      // Filter out empty tags
-      { $match: { tags: { $ne: '', $ne: null, $exists: true } } },
-      // Group by tag and count frequency
-      {
-        $group: {
-          _id: '$tags',
-          count: { $sum: 1 }
-        }
-      },
-      // Sort by count descending
-      { $sort: { count: -1 } },
-      // Limit results
-      { $limit: parseInt(limit) },
-      // Format output
-      {
-        $project: {
-          _id: 0,
-          tag: '$_id',
-          count: 1
-        }
-      }
-    ]);
-
-    // Extract just the tag names for the response
-    const tags = tagAggregation.map(item => item.tag);
-
-    res.json({
-      success: true,
-      tags,
-      total: tags.length
-    });
-
-  } catch (error) {
-    console.error('Error fetching popular tags:', error);
-    res.status(500).json({ 
-      success: false,
-      message: 'Error fetching popular tags', 
-      error: error.message 
-    });
-  }
-});
 
 // GET /api/content - Consolidated content discovery endpoint (REFACTORED for new schema)
 router.get('/', validatePagination, async (req, res) => {
@@ -444,69 +371,6 @@ router.get('/:slug', async (req, res) => {
   }
 });
 
-// GET /api/content/tags/popular - Get trending/popular tags (REFACTORED)
-router.get('/tags/popular', async (req, res) => {
-  try {
-    // Set cache control headers to prevent caching issues
-    res.set({
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0'
-    });
-    
-    const { limit = 10 } = req.query;
-
-    // Get popular tags using aggregation on published submissions
-    const pipeline = [
-      { $match: { status: 'published' } },
-      {
-        $lookup: {
-          from: 'contents',
-          localField: 'contentIds',
-          foreignField: '_id',
-          as: 'contents'
-        }
-      },
-      { $unwind: '$contents' },
-      { $unwind: '$contents.tags' },
-      { $match: { 'contents.tags': { $ne: null, $ne: '' } } },
-      {
-        $group: {
-          _id: '$contents.tags',
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { count: -1 } },
-      { $limit: parseInt(limit) * 2 }, // Get more to filter UUID tags
-      {
-        $project: {
-          _id: 0,
-          tag: '$_id',
-          count: 1
-        }
-      }
-    ];
-
-    const popularTags = await Submission.aggregate(pipeline);
-    
-    // Filter out UUID tags and keep only readable tags
-    const mappedTags = popularTags
-      .map(tagInfo => ({
-        ...tagInfo,
-        tag: mapSingleTag(tagInfo.tag)
-      }))
-      .filter(tagInfo => tagInfo.tag.length > 0) // Filter out empty tags (UUIDs get filtered to empty strings)
-      .slice(0, parseInt(limit));
-    
-    res.json({ 
-      tags: mappedTags.map(t => t.tag)
-    });
-
-  } catch (error) {
-    console.error('Error fetching popular tags:', error);
-    res.status(500).json({ message: 'Error fetching popular tags', error: error.message });
-  }
-});
 
 // POST /api/content/:contentId/view - Increment view count (REFACTORED - checks publication via submission)
 router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) => {
@@ -669,23 +533,6 @@ router.get('/published', validatePagination, async (req, res) => {
   }
 });
 
-// GET /api/content/by-tag/:tag - Get content by specific tag - DEPRECATED  
-router.get('/by-tag/:tag', validatePagination, async (req, res) => {
-  try {
-    console.warn('DEPRECATED: /api/content/by-tag/:tag endpoint used. Please use /api/content?tag=');
-    
-    // Forward to main endpoint with tag parameter
-    req.query.tag = req.params.tag;
-    req.query.published = 'true';
-    
-    // Use the refactored main handler
-    return router.handle(req, res);
-    
-  } catch (error) {
-    console.error('Error in deprecated by-tag endpoint:', error);
-    res.status(500).json({ message: 'Error fetching content by tag', error: error.message });
-  }
-});
 
 // GET /api/content/by-author/:userId - Get published content by author - DEPRECATED
 router.get('/by-author/:userId', validateObjectId('userId'), validatePagination, async (req, res) => {
