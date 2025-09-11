@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const User = require('../models/User');
+const Analytics = require('../models/Analytics');
 const UserService = require('../services/userService');
 const { authenticateUser, requireAdmin } = require('../middleware/auth');
 const { 
@@ -88,6 +89,26 @@ router.get('/search', validatePagination, async (req, res) => {
     }
     
     const users = await UserService.searchUsers(query, req.query);
+    
+    // Log search query analytics (non-blocking)
+    setImmediate(() => {
+      Analytics.create({
+        eventType: 'search_query',
+        eventData: {
+          query: query,
+          resultsCount: users.length,
+          filters: { 
+            type: 'users',
+            ...req.query
+          }
+        },
+        userId: req.user?._id || null,
+        sessionId: req.sessionID || req.headers['x-session-id'] || 'anonymous',
+        userAgent: req.headers['user-agent'] || 'Unknown',
+        ip: req.ip || req.connection?.remoteAddress || 'Unknown'
+      }).catch(err => console.error('Analytics logging error:', err));
+    });
+    
     res.json({ users });
   } catch (error) {
     res.status(500).json({ message: 'Error searching users', error: error.message });

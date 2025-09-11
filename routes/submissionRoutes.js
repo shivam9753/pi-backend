@@ -3,6 +3,7 @@ const multer = require('multer');
 const Submission = require('../models/Submission');
 const Content = require('../models/Content');
 const Review = require('../models/Review');
+const Analytics = require('../models/Analytics');
 const SubmissionService = require('../services/submissionService');
 const { authenticateUser, requireReviewer, requireWriter, requireAdmin } = require('../middleware/auth');
 const { 
@@ -810,6 +811,33 @@ router.get('/', validatePagination, async (req, res) => {
     // Add types if requested
     if (submissionTypes) {
       response.types = submissionTypes;
+    }
+    
+    // Log search query analytics (non-blocking)
+    if (search && search.trim()) {
+      setImmediate(() => {
+        Analytics.create({
+          eventType: 'search_query',
+          eventData: {
+            query: search.trim(),
+            resultsCount: total,
+            filters: { 
+              type: 'submissions',
+              status,
+              submissionType: type,
+              featured,
+              tag,
+              sortBy,
+              order,
+              isTopicSubmission
+            }
+          },
+          userId: req.user?._id || null,
+          sessionId: req.sessionID || req.headers['x-session-id'] || 'anonymous',
+          userAgent: req.headers['user-agent'] || 'Unknown',
+          ip: req.ip || req.connection?.remoteAddress || 'Unknown'
+        }).catch(err => console.error('Analytics logging error:', err));
+      });
     }
     
     res.json(response);
