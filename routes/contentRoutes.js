@@ -232,7 +232,7 @@ router.get('/', validatePagination, async (req, res) => {
   }
 });
 
-// GET /api/content/id/:contentId - Get individual content by ID (REFACTORED)
+// GET /api/content/id/:contentId - Get individual content by ID with author's featured content (REFACTORED)
 router.get('/id/:contentId', validateObjectId('contentId'), async (req, res) => {
   try {
     const { contentId } = req.params;
@@ -277,7 +277,8 @@ router.get('/id/:contentId', validateObjectId('contentId'), async (req, res) => 
             id: '$author._id',
             username: '$author.username',
             name: '$author.name',
-            profileImage: '$author.profileImage'
+            profileImage: '$author.profileImage',
+            bio: '$author.bio'
           },
           submission: {
             _id: '$submission._id',
@@ -295,7 +296,51 @@ router.get('/id/:contentId', validateObjectId('contentId'), async (req, res) => 
       return res.status(404).json({ message: 'Published content not found' });
     }
 
-    res.json(results[0]);
+    const content = results[0];
+
+    // Get author's other featured content (limit to 5, excluding current content)
+    const authorFeaturedPipeline = [
+      { 
+        $match: { 
+          _id: { $ne: contentId },  // Exclude current content
+          isFeatured: true 
+        } 
+      },
+      {
+        $lookup: {
+          from: 'submissions',
+          localField: 'submissionId',
+          foreignField: '_id',
+          as: 'submission'
+        }
+      },
+      { $unwind: '$submission' },
+      { 
+        $match: { 
+          'submission.status': 'published',
+          'submission.userId': content.author._id  // Same author
+        } 
+      },
+      { $sort: { featuredAt: -1 } },  // Most recently featured first
+      { $limit: 5 },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          viewCount: 1,
+          featuredAt: 1,
+          submissionType: '$submission.submissionType',
+          slug: '$submission.seo.slug'
+        }
+      }
+    ];
+
+    const authorFeaturedContent = await Content.aggregate(authorFeaturedPipeline);
+
+    // Add featured content to response
+    content.authorFeaturedContent = authorFeaturedContent;
+
+    res.json(content);
 
   } catch (error) {
     console.error('Error fetching content by ID:', error);
@@ -348,7 +393,8 @@ router.get('/:slug', async (req, res) => {
             id: '$author._id',
             username: '$author.username',
             name: '$author.name',
-            profileImage: '$author.profileImage'
+            profileImage: '$author.profileImage',
+            bio: '$author.bio'
           },
           submission: {
             _id: '$submission._id',
