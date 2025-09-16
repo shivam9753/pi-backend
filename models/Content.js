@@ -72,6 +72,19 @@ const contentSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+  recentViews: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  windowStartTime: {
+    type: Date,
+    default: function() {
+      const date = new Date();
+      date.setDate(date.getDate() - 7);
+      return date;
+    }
+  },
   submissionId: {
     type: String,
     ref: 'Submission',
@@ -308,6 +321,34 @@ contentSchema.methods.checkPublishStatus = async function() {
     isPublished: submission.status === 'published',
     publishedAt: submission.publishedAt
   };
+};
+
+// Rolling window view tracking method (same as Submission)
+contentSchema.methods.logView = async function(windowDays = 7) {
+  const now = new Date();
+  const windowStart = new Date();
+  windowStart.setDate(windowStart.getDate() - windowDays);
+
+  // If this is the first view or window has shifted significantly, reset
+  if (!this.windowStartTime || this.windowStartTime < windowStart) {
+    this.windowStartTime = windowStart;
+    this.recentViews = 1;
+  } else {
+    this.recentViews += 1;
+  }
+
+  this.viewCount += 1;
+
+  // Update the window start time to maintain the rolling window
+  this.windowStartTime = windowStart;
+
+  await this.save();
+};
+
+// Get trending score (recent vs total views ratio)
+contentSchema.methods.getTrendingScore = function() {
+  if (this.viewCount === 0) return 0;
+  return Math.round((this.recentViews / this.viewCount) * 100);
 };
 
 // Method to get full content with publication info

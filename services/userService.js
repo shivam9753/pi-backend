@@ -393,6 +393,171 @@ class UserService {
 
     return updatedUser.toPublicJSON();
   }
+
+  static async markUserFeatured(userId) {
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    if (user.isFeatured) {
+      throw new Error('User is already featured');
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      {
+        isFeatured: true,
+        featuredAt: new Date()
+      },
+      { new: true }
+    );
+
+    return updatedUser.toPublicJSON();
+  }
+
+  static async unmarkUserFeatured(userId) {
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    if (!user.isFeatured) {
+      throw new Error('User is not currently featured');
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      {
+        isFeatured: false,
+        featuredAt: null
+      },
+      { new: true }
+    );
+
+    return updatedUser.toPublicJSON();
+  }
+
+  static async getFeaturedUsers(options = {}) {
+    const {
+      limit = 20,
+      skip = 0,
+      sortBy = 'featuredAt',
+      order = 'desc'
+    } = options;
+
+    const sortOrder = order === 'asc' ? 1 : -1;
+    const sortObj = { [sortBy]: sortOrder };
+
+    try {
+      // Get featured users with basic stats
+      const pipeline = [
+        // Match only featured users
+        { $match: { isFeatured: true } },
+
+        // Lookup published submissions count
+        {
+          $lookup: {
+            from: 'submissions',
+            let: { userId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$userId', '$$userId'] },
+                      { $eq: ['$status', 'published'] }
+                    ]
+                  }
+                }
+              },
+              { $count: 'count' }
+            ],
+            as: 'publishedCount'
+          }
+        },
+
+        // Add computed fields
+        {
+          $addFields: {
+            publishedSubmissions: {
+              $ifNull: [{ $arrayElemAt: ['$publishedCount.count', 0] }, 0]
+            }
+          }
+        },
+
+        // Project only required fields
+        {
+          $project: {
+            _id: 1,
+            username: 1,
+            name: 1,
+            email: 1,
+            bio: 1,
+            role: 1,
+            profileImage: 1,
+            isFeatured: 1,
+            featuredAt: 1,
+            createdAt: 1,
+            publishedSubmissions: 1
+          }
+        },
+
+        // Sort
+        { $sort: sortObj },
+
+        // Pagination
+        { $skip: parseInt(skip) },
+        { $limit: parseInt(limit) }
+      ];
+
+      const users = await User.aggregate(pipeline);
+
+      // Get total count of featured users
+      const totalCount = await User.countDocuments({ isFeatured: true });
+
+      return {
+        users,
+        pagination: {
+          total: totalCount,
+          limit: parseInt(limit),
+          skip: parseInt(skip),
+          hasNext: (parseInt(skip) + parseInt(limit)) < totalCount,
+          hasPrev: parseInt(skip) > 0
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching featured users:', error);
+      throw new Error('Failed to fetch featured users');
+    }
+  }
+
+  static async markUserAsFeaturedByContent(userId) {
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        return null; // User not found, but don't throw error for background operation
+      }
+
+      if (user.isFeatured) {
+        return user; // Already featured
+      }
+
+      const updatedUser = await User.findByIdAndUpdate(
+        userId,
+        {
+          isFeatured: true,
+          featuredAt: new Date()
+        },
+        { new: true }
+      );
+
+      return updatedUser;
+    } catch (error) {
+      console.error('Error marking user as featured by content:', error);
+      return null; // Don't throw error for background operation
+    }
+  }
 }
 
 module.exports = UserService;

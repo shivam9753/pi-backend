@@ -26,6 +26,98 @@ const upload = multer({
   }
 });
 
+// GET /api/users/trending - Get trending authors based on featured content views (public)
+router.get('/trending', async (req, res) => {
+  try {
+    const { limit = 5 } = req.query;
+
+    const pipeline = [
+      // Join contents with submissions to get author info
+      {
+        $lookup: {
+          from: 'submissions',
+          localField: 'submissionId',
+          foreignField: '_id',
+          as: 'submission'
+        }
+      },
+      { $unwind: '$submission' },
+
+      // Filter for featured content only
+      { $match: { isFeatured: true } },
+
+      // Join with users to get author details
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'submission.userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
+      { $unwind: '$author' },
+
+      // Additional filter: only include featured authors
+      { $match: { 'author.isFeatured': true } },
+
+      // Group by author and sum view counts
+      {
+        $group: {
+          _id: '$author._id',
+          author: { $first: '$author' },
+          totalViews: { $sum: '$viewCount' },
+          featuredCount: { $sum: 1 },
+          latestFeaturedContent: {
+            $first: {
+              _id: '$_id',
+              title: '$title',
+              viewCount: '$viewCount',
+              featuredAt: '$featuredAt'
+            }
+          }
+        }
+      },
+
+      // Sort by total views descending
+      { $sort: { totalViews: -1 } },
+
+      // Limit results
+      { $limit: parseInt(limit) },
+
+      // Project final shape
+      {
+        $project: {
+          _id: 1,
+          author: {
+            _id: '$author._id',
+            name: '$author.name',
+            username: '$author.username',
+            profileImage: '$author.profileImage',
+            bio: '$author.bio',
+            isFeatured: '$author.isFeatured',
+            featuredAt: '$author.featuredAt'
+          },
+          totalViews: 1,
+          featuredCount: 1,
+          trendingContent: '$latestFeaturedContent'
+        }
+      }
+    ];
+
+    const Content = require('../models/Content');
+    const trendingAuthors = await Content.aggregate(pipeline);
+
+    res.json({
+      authors: trendingAuthors,
+      total: trendingAuthors.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching trending authors:', error);
+    res.status(500).json({ message: 'Error fetching trending authors', error: error.message });
+  }
+});
+
 // POST /admin/users - Create new user (admin only)
 router.post('/admin/users', authenticateUser, requireAdmin, async (req, res) => {
   try {
@@ -79,36 +171,20 @@ router.post('/admin/users', authenticateUser, requireAdmin, async (req, res) => 
 });
 
 
-// GET /api/users/search - Search users
-router.get('/search', validatePagination, async (req, res) => {
+// GET /api/users/search - Search users (admin function, no analytics tracking)
+router.get('/search', authenticateUser, requireAdmin, validatePagination, async (req, res) => {
   try {
     const { q: query } = req.query;
-    
+
     if (!query) {
       return res.status(400).json({ message: 'Search query is required' });
     }
-    
+
     const users = await UserService.searchUsers(query, req.query);
-    
-    // Log search query analytics (non-blocking)
-    setImmediate(() => {
-      Analytics.create({
-        eventType: 'search_query',
-        eventData: {
-          query: query,
-          resultsCount: users.length,
-          filters: { 
-            type: 'users',
-            ...req.query
-          }
-        },
-        userId: req.user?._id || null,
-        sessionId: req.sessionID || req.headers['x-session-id'] || 'anonymous',
-        userAgent: req.headers['user-agent'] || 'Unknown',
-        ip: req.ip || req.connection?.remoteAddress || 'Unknown'
-      }).catch(err => console.error('Analytics logging error:', err));
-    });
-    
+
+    // Note: No analytics tracking for admin user searches
+    // Analytics tracking should only be for public content searches
+
     res.json({ users });
   } catch (error) {
     res.status(500).json({ message: 'Error searching users', error: error.message });
@@ -294,5 +370,48 @@ router.delete('/:id', authenticateUser, requireAdmin, validateObjectId('id'), as
     res.status(500).json({ message: 'Error deleting user', error: error.message });
   }
 });
+
+// PATCH /api/users/:id/feature - Mark user as featured (admin only)
+router.patch('/:id/feature', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
+  try {
+    const updatedUser = await UserService.markUserFeatured(req.params.id);
+    res.json({
+      message: 'User marked as featured successfully',
+      user: updatedUser
+    });
+  } catch (error) {
+    if (error.message === 'User not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error marking user as featured', error: error.message });
+  }
+});
+
+// PATCH /api/users/:id/unfeature - Remove featured status from user (admin only)
+router.patch('/:id/unfeature', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
+  try {
+    const updatedUser = await UserService.unmarkUserFeatured(req.params.id);
+    res.json({
+      message: 'User featured status removed successfully',
+      user: updatedUser
+    });
+  } catch (error) {
+    if (error.message === 'User not found') {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Error removing user featured status', error: error.message });
+  }
+});
+
+// GET /api/users/featured - Get all featured users (public)
+router.get('/featured', validatePagination, async (req, res) => {
+  try {
+    const result = await UserService.getFeaturedUsers(req.query);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching featured users', error: error.message });
+  }
+});
+
 
 module.exports = router;

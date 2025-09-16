@@ -2004,6 +2004,29 @@ router.post('/:id/view', validateObjectId('id'), async (req, res) => {
     // Log the view using our rolling window method
     await submission.logView(windowDays);
 
+    // Also increment view counts for all content pieces in this submission
+    if (submission.contentIds && submission.contentIds.length > 0) {
+      const Content = require('../models/Content');
+
+      // Convert ObjectIds to strings for querying
+      const contentIdStrings = submission.contentIds.map(id => id.toString());
+
+      try {
+        // Update view counts for all content pieces using their logView method
+        const contentPieces = await Content.find({ _id: { $in: contentIdStrings } });
+
+        // Use Promise.all to log views on all content pieces concurrently
+        await Promise.all(
+          contentPieces.map(content => content.logView(windowDays))
+        );
+
+        console.log(`Updated view counts for ${contentIdStrings.length} content pieces in submission ${id}`);
+      } catch (contentError) {
+        console.warn('Error updating content view counts:', contentError);
+        // Don't fail the request if content view updates fail
+      }
+    }
+
     res.json({
       success: true,
       viewCount: submission.viewCount,

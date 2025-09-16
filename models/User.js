@@ -49,6 +49,14 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  isFeatured: {
+    type: Boolean,
+    default: false
+  },
+  featuredAt: {
+    type: Date,
+    default: null
+  },
 }, {
   timestamps: true,
   versionKey: false,
@@ -68,7 +76,9 @@ userSchema.methods.toPublicJSON = function() {
     name: this.name,
     role: this.role,
     bio: this.bio,
-    profileImage: this.profileImage
+    profileImage: this.profileImage,
+    isFeatured: this.isFeatured,
+    featuredAt: this.featuredAt
   };
 };
 
@@ -80,7 +90,9 @@ userSchema.methods.toAuthJSON = function() {
     name: this.name,
     role: this.role,
     bio: this.bio,
-    profileImage: this.profileImage
+    profileImage: this.profileImage,
+    isFeatured: this.isFeatured,
+    featuredAt: this.featuredAt
   };
 };
 

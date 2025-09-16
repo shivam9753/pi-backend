@@ -13,18 +13,19 @@ const router = express.Router();
 // GET /api/content - Consolidated content discovery endpoint (REFACTORED for new schema)
 router.get('/', validatePagination, async (req, res) => {
   try {
-    const { 
+    const {
       published,
-      type, 
-      limit = 20, 
-      skip = 0, 
-      sortBy = 'publishedAt', 
+      type,
+      limit = 20,
+      skip = 0,
+      sortBy = 'publishedAt',
       order = 'desc',
       tags,
       tag,
       author,
       userId,
-      search
+      search,
+      fields
     } = req.query;
 
     // Build aggregation pipeline
@@ -140,9 +141,74 @@ router.get('/', validatePagination, async (req, res) => {
     pipeline.push({ $skip: parseInt(skip) });
     pipeline.push({ $limit: parseInt(limit) });
     
-    // Step 10: Project final shape
-    pipeline.push({
-      $project: {
+    // Step 10: Project final shape - support field selection
+    let projection = {};
+
+    if (fields && fields.trim()) {
+      // Parse fields parameter (comma-separated)
+      const fieldList = fields.split(',').map(f => f.trim()).filter(f => f);
+
+      // Always include _id for consistency
+      projection._id = 1;
+
+      // Map requested fields to projection
+      fieldList.forEach(field => {
+        switch (field) {
+          case 'title':
+            projection.title = 1;
+            break;
+          case 'body':
+            projection.body = 1;
+            break;
+          case 'tags':
+            projection.tags = 1;
+            break;
+          case 'footnotes':
+            projection.footnotes = 1;
+            break;
+          case 'isFeatured':
+            projection.isFeatured = 1;
+            break;
+          case 'featuredAt':
+            projection.featuredAt = 1;
+            break;
+          case 'viewCount':
+            projection.viewCount = 1;
+            break;
+          case 'createdAt':
+            projection.createdAt = 1;
+            break;
+          case 'publishedAt':
+            projection.publishedAt = 1;
+            break;
+          case 'submissionType':
+            projection.submissionType = 1;
+            break;
+          case 'seo':
+            projection.seo = 1;
+            break;
+          case 'author':
+            projection.author = {
+              _id: '$author._id',
+              id: '$author._id',
+              username: '$author.username',
+              name: '$author.name',
+              profileImage: '$author.profileImage'
+            };
+            break;
+          case 'submission':
+            projection.submission = {
+              _id: '$submission._id',
+              title: '$submission.title',
+              type: '$submission.submissionType',
+              slug: '$submission.seo.slug'
+            };
+            break;
+        }
+      });
+    } else {
+      // Default projection - return all fields
+      projection = {
         _id: 1,
         title: 1,
         body: 1,
@@ -168,8 +234,10 @@ router.get('/', validatePagination, async (req, res) => {
           type: '$submission.submissionType',
           slug: '$submission.seo.slug'
         }
-      }
-    });
+      };
+    }
+
+    pipeline.push({ $project: projection });
 
     const contents = await Content.aggregate(pipeline);
     
@@ -446,10 +514,11 @@ router.get('/:slug', async (req, res) => {
 });
 
 
-// POST /api/content/:contentId/view - Increment view count (REFACTORED - checks publication via submission)
+// POST /api/content/:contentId/view - Increment view count (simple approach like submissions)
 router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) => {
   try {
     const { contentId } = req.params;
+    const { windowDays = 7 } = req.body;
 
     // Check if content is published via submission status
     const pipeline = [
@@ -467,27 +536,37 @@ router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) 
     ];
 
     const publishedContent = await Content.aggregate(pipeline);
-    
+
     if (publishedContent.length === 0) {
       return res.status(404).json({ message: 'Published content not found' });
     }
 
-    // Increment view count
-    const updatedContent = await Content.findByIdAndUpdate(
-      contentId,
-      { $inc: { viewCount: 1 } },
-      { new: true, select: 'viewCount' }
-    );
+    // Use the rolling window method (same as submissions)
+    const content = await Content.findById(contentId);
+    if (!content) {
+      return res.status(404).json({ message: 'Content not found' });
+    }
 
-    // Also increment submission view count for trending calculations
-    await Submission.findByIdAndUpdate(
-      publishedContent[0].submission._id,
-      { $inc: { viewCount: 1 } }
-    );
+    await content.logView(windowDays);
+
+    // Also log view on the parent submission using the rolling window method
+    const Submission = require('../models/Submission');
+    try {
+      const submission = await Submission.findById(publishedContent[0].submission._id);
+      if (submission) {
+        await submission.logView(windowDays);
+      }
+    } catch (submissionError) {
+      console.warn('Error logging submission view:', submissionError);
+      // Don't fail if submission view update fails
+    }
 
     res.json({
       success: true,
-      viewCount: updatedContent.viewCount
+      viewCount: content.viewCount,
+      recentViews: content.recentViews,
+      windowStartTime: content.windowStartTime.toISOString(),
+      trendingScore: content.getTrendingScore()
     });
 
   } catch (error) {
@@ -535,6 +614,21 @@ router.post('/:contentId/feature', authenticateUser, requireReviewer, validateOb
     content.isFeatured = true;
     content.featuredAt = new Date();
     await content.save();
+
+    // Find the submission to get the author's user ID
+    const Submission = require('../models/Submission');
+    const UserService = require('../services/userService');
+
+    try {
+      const submission = await Submission.findById(content.submissionId);
+      if (submission && submission.userId) {
+        // Automatically mark the author as featured
+        await UserService.markUserAsFeaturedByContent(submission.userId);
+      }
+    } catch (userError) {
+      // Log error but don't fail the content featuring
+      console.error('Error marking author as featured:', userError);
+    }
 
     res.json({
       success: true,
