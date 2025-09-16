@@ -2263,4 +2263,302 @@ router.get('/:id', validateObjectId('id'), async (req, res) => {
   }
 });
 
+// ========================================
+// RESPONSE COLLECTION ENDPOINTS
+// ========================================
+
+// POST /api/submissions/grievance - Submit a grievance
+router.post('/grievance', authenticateUser, async (req, res) => {
+  try {
+    const { title, message } = req.body;
+    
+    // Validation
+    if (!title || !message) {
+      return res.status(400).json({ message: 'Title and message are required' });
+    }
+    
+    if (title.length > 200) {
+      return res.status(400).json({ message: 'Title must be 200 characters or less' });
+    }
+    
+    if (message.length > 2000) {
+      return res.status(400).json({ message: 'Message must be 2000 characters or less' });
+    }
+    
+    // Create content for the grievance message
+    const content = await Content.create({
+      title: title,
+      body: message,
+      type: 'grievance_message',
+      submissionId: null // Will be set after submission creation
+    });
+    
+    // Create submission with grievance type
+    const submissionData = {
+      title: title,
+      description: 'Grievance submission',
+      submissionType: 'grievance',
+      userId: req.user._id,
+      contentIds: [content._id],
+      status: SUBMISSION_STATUS.SUBMITTED
+    };
+    
+    const submission = await Submission.create(submissionData);
+    
+    // Update content with submission reference
+    content.submissionId = submission._id;
+    await content.save();
+    
+    // Add initial history entry
+    await submission.addHistoryEntry('submitted', SUBMISSION_STATUS.SUBMITTED, req.user._id, req.user.role);
+    await submission.save();
+    
+    res.status(201).json({
+      message: 'Grievance submitted successfully',
+      submission: {
+        _id: submission._id,
+        title: submission.title,
+        submissionType: submission.submissionType,
+        status: submission.status,
+        createdAt: submission.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Grievance submission error:', error);
+    res.status(500).json({ message: 'Error submitting grievance', error: error.message });
+  }
+});
+
+// POST /api/submissions/writing-program/:programId/apply - Submit writing program application
+router.post('/writing-program/:programId/apply', authenticateUser, validateObjectId('programId'), async (req, res) => {
+  try {
+    const { criteriaResponses, writingSamples } = req.body;
+    const programId = req.params.programId;
+    
+    // Import WritingProgram model
+    const WritingProgram = require('../models/WritingProgram');
+    
+    // Verify program exists and is accepting applications
+    const program = await WritingProgram.findById(programId);
+    if (!program) {
+      return res.status(404).json({ message: 'Writing program not found' });
+    }
+    
+    if (!program.canAcceptApplications()) {
+      return res.status(400).json({ message: 'This program is not currently accepting applications' });
+    }
+    
+    // Validate criteria responses
+    if (program.criteria.questions) {
+      for (const question of program.criteria.questions) {
+        if (question.required && !criteriaResponses[question.id]) {
+          return res.status(400).json({ 
+            message: `Response required for: ${question.question}` 
+          });
+        }
+      }
+    }
+    
+    // Validate writing samples if required
+    if (program.criteria.requiresWritingSamples) {
+      if (!writingSamples || !Array.isArray(writingSamples)) {
+        return res.status(400).json({ message: 'Writing samples are required for this program' });
+      }
+      
+      if (writingSamples.length < program.criteria.minWritingSamples) {
+        return res.status(400).json({ 
+          message: `Minimum ${program.criteria.minWritingSamples} writing samples required` 
+        });
+      }
+      
+      if (writingSamples.length > program.criteria.maxWritingSamples) {
+        return res.status(400).json({ 
+          message: `Maximum ${program.criteria.maxWritingSamples} writing samples allowed` 
+        });
+      }
+      
+      // Validate word count for each sample
+      for (const sample of writingSamples) {
+        if (!sample.title || !sample.content) {
+          return res.status(400).json({ message: 'Each writing sample must have a title and content' });
+        }
+        
+        const wordCount = sample.content.trim().split(/\s+/).length;
+        if (wordCount > program.criteria.maxWordCount) {
+          return res.status(400).json({ 
+            message: `Writing sample "${sample.title}" exceeds maximum word count of ${program.criteria.maxWordCount}` 
+          });
+        }
+      }
+    }
+    
+    const contentIds = [];
+    
+    // Create content for criteria responses
+    const criteriaContent = await Content.create({
+      title: `Application Response for ${program.title}`,
+      body: JSON.stringify(criteriaResponses, null, 2),
+      type: 'application_criteria',
+      submissionId: null
+    });
+    contentIds.push(criteriaContent._id);
+    
+    // Create content for writing samples
+    if (writingSamples && writingSamples.length > 0) {
+      for (const sample of writingSamples) {
+        const sampleContent = await Content.create({
+          title: sample.title,
+          body: sample.content,
+          type: 'writing_sample',
+          submissionId: null
+        });
+        contentIds.push(sampleContent._id);
+      }
+    }
+    
+    // Create submission
+    const submissionData = {
+      title: `Application: ${program.title}`,
+      description: `Application for writing program: ${program.title}`,
+      submissionType: 'writing_program_application',
+      userId: req.user._id,
+      contentIds: contentIds,
+      status: SUBMISSION_STATUS.SUBMITTED,
+      // Store program reference in metadata
+      metadata: {
+        programId: programId,
+        programTitle: program.title,
+        criteriaResponses: criteriaResponses
+      }
+    };
+    
+    const submission = await Submission.create(submissionData);
+    
+    // Update all content with submission reference
+    for (const contentId of contentIds) {
+      await Content.findByIdAndUpdate(contentId, { submissionId: submission._id });
+    }
+    
+    // Add initial history entry
+    await submission.addHistoryEntry('submitted', SUBMISSION_STATUS.SUBMITTED, req.user._id, req.user.role);
+    await submission.save();
+    
+    // Increment program applications count
+    await program.incrementApplications();
+    
+    res.status(201).json({
+      message: 'Application submitted successfully',
+      submission: {
+        _id: submission._id,
+        title: submission.title,
+        submissionType: submission.submissionType,
+        status: submission.status,
+        createdAt: submission.createdAt
+      },
+      program: {
+        title: program.title,
+        spotsRemaining: program.spotsRemaining - 1
+      }
+    });
+  } catch (error) {
+    console.error('Writing program application error:', error);
+    res.status(500).json({ message: 'Error submitting application', error: error.message });
+  }
+});
+
+// GET /api/submissions/responses/grievances - Get grievance submissions (Admin/Reviewer only)
+router.get('/responses/grievances', authenticateUser, requireReviewer, async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      status = 'all',
+      sortBy = 'createdAt',
+      sortOrder = 'desc' 
+    } = req.query;
+    
+    const skip = (page - 1) * limit;
+    let query = { submissionType: 'grievance' };
+    
+    if (status !== 'all') {
+      query.status = status;
+    }
+    
+    const sortObj = {};
+    sortObj[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    
+    const submissions = await Submission.find(query)
+      .populate('userId', 'username name email')
+      .populate('reviewedBy', 'username name')
+      .sort(sortObj)
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    const total = await Submission.countDocuments(query);
+    
+    res.json({
+      submissions,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching grievances:', error);
+    res.status(500).json({ message: 'Error fetching grievances', error: error.message });
+  }
+});
+
+// GET /api/submissions/responses/applications - Get writing program applications (Admin/Reviewer only)
+router.get('/responses/applications', authenticateUser, requireReviewer, async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      status = 'all',
+      programId,
+      sortBy = 'createdAt',
+      sortOrder = 'desc' 
+    } = req.query;
+    
+    const skip = (page - 1) * limit;
+    let query = { submissionType: 'writing_program_application' };
+    
+    if (status !== 'all') {
+      query.status = status;
+    }
+    
+    if (programId) {
+      query['metadata.programId'] = programId;
+    }
+    
+    const sortObj = {};
+    sortObj[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    
+    const submissions = await Submission.find(query)
+      .populate('userId', 'username name email')
+      .populate('reviewedBy', 'username name')
+      .sort(sortObj)
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    const total = await Submission.countDocuments(query);
+    
+    res.json({
+      submissions,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching applications:', error);
+    res.status(500).json({ message: 'Error fetching applications', error: error.message });
+  }
+});
+
 module.exports = router;

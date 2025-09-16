@@ -151,7 +151,7 @@ class DevValidation {
    * Validate environment configuration
    */
   static validateEnvironment() {
-    const requiredEnvVars = ['PORT', 'MONGODB_URI', 'JWT_SECRET'];
+    const requiredEnvVars = ['PORT', 'ATLAS_URL', 'JWT_SECRET'];
     const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
     
     if (missingVars.length > 0) {

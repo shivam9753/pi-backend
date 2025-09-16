@@ -62,6 +62,7 @@ const topicPitchRoutes = require('./routes/topicPitchRoutes');
 const tagRoutes = require('./routes/tagRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const searchAnalyticsRoutes = require('./routes/searchAnalyticsRoutes');
+const writingProgramRoutes = require('./routes/writingProgramRoutes');
 // const poetryAnalysis = require('./routes/poetry-analysis'); // DEPRECATED - moved to submissionRoutes
 
 // Import security middleware
@@ -154,6 +155,7 @@ app.use('/api/tags', tagRoutes);
 app.use('/api/topic-pitches', topicPitchRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/analytics/search', searchAnalyticsRoutes);
+app.use('/api/writing-programs', writingProgramRoutes);
 app.use('/api/admin', require('./routes/adminRoutes'));
 
 

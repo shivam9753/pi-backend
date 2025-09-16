@@ -46,7 +46,9 @@ const SUBMISSION_TYPES = {
   OPINION: 'opinion',
   BOOKS: 'books',
   NAPO_WRIMO: 'napoWrimo',
-  INTERVIEW: 'interview'
+  INTERVIEW: 'interview',
+  GRIEVANCE: 'grievance',
+  WRITING_PROGRAM_APPLICATION: 'writing_program_application'
 };
 
 // User Roles Constants
