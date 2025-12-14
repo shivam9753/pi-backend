@@ -104,11 +104,11 @@ app.use((req, res, next) => {
 
 app.use(cors({
   origin: process.env.FRONTEND_URLS ? process.env.FRONTEND_URLS.split(',') : [
-    'http://localhost:4200', 
+    'http://localhost:4200',
     'http://127.0.0.1:4200'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma', 'Expires', 'X-Build-Version'],
   credentials: true
 }));
 

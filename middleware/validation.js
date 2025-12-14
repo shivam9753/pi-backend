@@ -1,4 +1,5 @@
 const { body, param, query, validationResult } = require('express-validator');
+const { STATUS_ARRAYS } = require('../constants/status.constants');
 
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
@@ -135,8 +136,8 @@ const validateSubmissionUpdate = [
 
 const validateStatusUpdate = [
   body('status')
-    .isIn(['draft', 'submitted', 'pending_review', 'in_progress', 'shortlisted', 'needs_changes', 'approved', 'rejected', 'published', 'archived', 'resubmitted'])
-    .withMessage('Status must be one of: draft, submitted, pending_review, in_progress, shortlisted, needs_changes, approved, rejected, published, archived, or resubmitted'),
+    .isIn(STATUS_ARRAYS.ALL_SUBMISSION_STATUSES)
+    .withMessage(`Status must be one of: ${STATUS_ARRAYS.ALL_SUBMISSION_STATUSES.join(', ')}`),
   body('notes')
     .optional()
     .isLength({ max: 1000 })
