@@ -2,13 +2,14 @@ const express = require('express');
 const Submission = require('../models/Submission');
 const Review = require('../models/Review');
 const SubmissionService = require('../services/submissionService');
+const emailService = require('../services/emailService');
 const { authenticateUser, requireReviewer, requireWriter, requireAdmin } = require('../middleware/auth');
-const { 
+const {
   validateObjectId,
-  validatePagination 
+  validatePagination
 } = require('../middleware/validation');
-const { 
-  SUBMISSION_STATUS, 
+const {
+  SUBMISSION_STATUS,
   STATUS_ARRAYS,
 } = require('../constants/status.constants');
 
@@ -233,7 +234,7 @@ router.post('/:id/move-to-progress', requireReviewer, validateObjectId('id'), as
 router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req, res) => {
   try {
     const { reviewNotes, rating } = req.body;
-    
+
     const reviewData = {
       reviewerId: req.user._id,
       status: SUBMISSION_STATUS.ACCEPTED,
@@ -244,7 +245,7 @@ router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req,
     // Create review record and update status
     const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
     await result.submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user, reviewNotes || 'Submission approved');
-    
+
     res.json({
       success: true,
       message: 'Submission approved successfully'
@@ -261,14 +262,14 @@ router.post('/:id/approve', requireReviewer, validateObjectId('id'), async (req,
 router.post('/:id/reject', requireReviewer, validateObjectId('id'), async (req, res) => {
   try {
     const { reviewNotes, rating } = req.body;
-    
+
     // Validate required review notes for rejection
     if (!reviewNotes || reviewNotes.trim().length === 0) {
-      return res.status(400).json({ 
-        message: 'Review notes are required when rejecting a submission' 
+      return res.status(400).json({
+        message: 'Review notes are required when rejecting a submission'
       });
     }
-    
+
     const reviewData = {
       reviewerId: req.user._id,
       status: SUBMISSION_STATUS.REJECTED,
@@ -279,7 +280,7 @@ router.post('/:id/reject', requireReviewer, validateObjectId('id'), async (req, 
     // Create review record and update status
     const result = await SubmissionService.reviewSubmission(req.params.id, reviewData);
     await result.submission.changeStatus(SUBMISSION_STATUS.REJECTED, req.user, reviewNotes.trim());
-    
+
     res.json({
       success: true,
       message: 'Submission rejected'
@@ -363,18 +364,95 @@ router.post('/:id/shortlist', requireReviewer, validateObjectId('id'), async (re
 router.get('/submission/:id', requireWriter, validateObjectId('id'), async (req, res) => {
   try {
     const review = await Review.findBySubmissionId(req.params.id);
-    
+
     if (!review) {
       return res.status(404).json({ message: 'No review found for this submission' });
     }
-    
+
     res.json({ review });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching submission review', error: error.message });
   }
 });
 
+// POST /api/reviews/:id/send-email - Send custom email to submission author
+router.post('/:id/send-email', requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const { subject, message, template } = req.body;
 
+    // Validate required fields
+    if (!subject || !subject.trim()) {
+      return res.status(400).json({ message: 'Email subject is required' });
+    }
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ message: 'Email message is required' });
+    }
+
+    // Get submission with author details
+    const submission = await Submission.findById(req.params.id).populate('userId', 'name username email');
+
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+
+    if (!submission.userId || !submission.userId.email) {
+      return res.status(400).json({ message: 'Author email not found' });
+    }
+
+    const author = submission.userId;
+
+    // Use template if provided, otherwise send custom message
+    let emailResult;
+    if (template) {
+      // Use predefined template
+      switch (template) {
+        case 'approved':
+          emailResult = await emailService.sendSubmissionApproved(submission, author, message);
+          break;
+        case 'rejected':
+          emailResult = await emailService.sendSubmissionRejected(submission, author, message);
+          break;
+        case 'revision':
+          emailResult = await emailService.sendRevisionRequested(submission, author, message);
+          break;
+        case 'shortlisted':
+          emailResult = await emailService.sendSubmissionShortlisted(submission, author, message);
+          break;
+        default:
+          return res.status(400).json({ message: 'Invalid template. Use: approved, rejected, revision, or shortlisted' });
+      }
+    } else {
+      // Send plain text email
+      const plainText = `Dear ${author.name || author.username},
+
+${message}
+
+Best regards,
+The PoemsIndia Editorial Team`;
+
+      emailResult = await emailService.sendPlainTextEmail(author.email, subject, plainText);
+    }
+
+    if (emailResult.success) {
+      res.json({
+        success: true,
+        message: `Email sent successfully to ${author.email}`,
+        messageId: emailResult.messageId
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send email',
+        error: emailResult.error || emailResult.reason
+      });
+    }
+
+  } catch (error) {
+    console.error('Error sending email:', error);
+    res.status(500).json({ message: 'Error sending email', error: error.message });
+  }
+});
 
 // DELETE /api/reviews/:id - Delete review (admin only)
 router.delete('/:id', requireAdmin, validateObjectId('id'), async (req, res) => {
