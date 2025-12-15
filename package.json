@@ -2,13 +2,13 @@
   "name": "pi-backend",
   "version": "1.0.0",
   "description": "Poetry India Backend API",
-  "main": "server.js",
+  "main": "server-async.js",
   "scripts": {
-    "start": "node server.js",
-    "start:dev": "cross-env NODE_ENV=development node server.js",
-    "start:prod": "cross-env NODE_ENV=production node server.js",
-    "dev": "cross-env NODE_ENV=development nodemon server.js",
-    "dev:watch": "cross-env NODE_ENV=development nodemon --watch .env --watch config/ --watch routes/ --watch models/ server.js",
+    "start": "node server-async.js",
+    "start:dev": "cross-env NODE_ENV=development node server-async.js",
+    "start:prod": "cross-env NODE_ENV=production node server-async.js",
+    "dev": "cross-env NODE_ENV=development nodemon server-async.js",
+    "dev:watch": "cross-env NODE_ENV=development nodemon --watch .env --watch config/ --watch routes/ --watch models/ server-async.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -21,6 +21,7 @@
   "type": "commonjs",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.859.0",
+    "@aws-sdk/client-secrets-manager": "^3.950.0",
     "@aws-sdk/lib-storage": "^3.859.0",
     "@aws-sdk/s3-request-presigner": "^3.859.0",
     "@vendia/serverless-express": "^4.12.6",
@@ -38,6 +39,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.1",
     "multer": "^1.4.5-lts.1",
+    "nodemailer": "^7.0.11",
     "path": "^0.12.7",
     "sharp": "^0.34.3",
     "uuid": "^11.1.0"
