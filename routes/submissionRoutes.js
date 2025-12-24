@@ -1831,23 +1831,38 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
       }
     }
     
-    const { title, description, submissionType, contents, status, imageUrl } = req.body;
-    
+    const { title, description, submissionType, contents, status, imageUrl, seo, excerpt } = req.body;
+
     // Update submission fields
     if (title) submission.title = title;
     if (description !== undefined) submission.description = description;
+    if (excerpt !== undefined) submission.excerpt = excerpt;
     if (submissionType) submission.submissionType = submissionType;
     if (status) submission.status = status;
     if (imageUrl !== undefined) submission.imageUrl = imageUrl;
+
+    // Update SEO fields if provided
+    if (seo) {
+      if (!submission.seo) {
+        submission.seo = {};
+      }
+      if (seo.slug !== undefined) submission.seo.slug = seo.slug;
+      if (seo.metaTitle !== undefined) submission.seo.metaTitle = seo.metaTitle;
+      if (seo.metaDescription !== undefined) submission.seo.metaDescription = seo.metaDescription;
+      if (seo.keywords !== undefined) submission.seo.keywords = seo.keywords;
+      if (seo.ogImage !== undefined) submission.seo.ogImage = seo.ogImage;
+      if (seo.featuredOnHomepage !== undefined) submission.seo.featuredOnHomepage = seo.featuredOnHomepage;
+    }
     
     // Handle content updates if provided
     if (contents && Array.isArray(contents)) {
-      // Delete existing content items
-      if (submission.contentIds && submission.contentIds.length > 0) {
-        await Content.deleteMany({ _id: { $in: submission.contentIds } });
-      }
-      
-      // Create new content items
+      // CRITICAL: Store old content IDs for cleanup AFTER successful creation
+      // This prevents data loss if content creation fails
+      const oldContentIds = submission.contentIds && submission.contentIds.length > 0
+        ? [...submission.contentIds]
+        : [];
+
+      // Create new content items FIRST (before deleting old ones)
       const contentDocs = contents.map(content => ({
         userId: req.user._id,
         submissionId: submission._id.toString(), // Add required submissionId
@@ -1857,14 +1872,15 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
         tags: content.tags || [],
         footnotes: content.footnotes || ''
       }));
-      
+
+      // Create new content (this may fail, preserving old content)
       const createdContents = await Content.create(contentDocs);
       submission.contentIds = createdContents.map(c => c._id);
-      
+
       // Recalculate reading time and excerpt
       submission.readingTime = Submission.calculateReadingTime(createdContents);
       submission.excerpt = Submission.generateExcerpt(createdContents);
-      
+
       // If this is a published post being updated by admin/reviewer, update the published content
       if (submission.status === 'published' && (isAdmin || isReviewer)) {
         // Update the published content items
@@ -1872,6 +1888,12 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
           content.isPublished = true;
           await content.save();
         }
+      }
+
+      // ONLY delete old content AFTER successfully creating new content
+      // This ensures data integrity - old content remains if anything above fails
+      if (oldContentIds.length > 0) {
+        await Content.deleteMany({ _id: { $in: oldContentIds } });
       }
     }
     

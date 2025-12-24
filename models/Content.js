@@ -108,7 +108,6 @@ const contentSchema = new mongoose.Schema({
     },
     metaDescription: {
       type: String,
-      maxlength: 160,
       trim: true
     }
   }

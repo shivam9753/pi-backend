@@ -130,7 +130,6 @@ const submissionSchema = new mongoose.Schema({
     },
     metaDescription: {
       type: String,
-      maxlength: 300,
       trim: true
     },
     keywords: [{
