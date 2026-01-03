@@ -264,12 +264,12 @@ class SubmissionService {
 
   static async getFeaturedSubmissions(filters = {}) {
     const { type, limit = 10 } = filters;
-    
+
     const query = { status: 'published', isFeatured: true };
     if (type) query.submissionType = type;
 
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId')
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId contentIds')
       .populate('userId', 'name username email profileImage')
       .sort({ reviewedAt: -1 })
       .limit(parseInt(limit))
@@ -277,6 +277,7 @@ class SubmissionService {
 
     return submissions.map(sub => ({
       _id: sub._id,
+      contentId: sub.contentIds && sub.contentIds.length > 0 ? sub.contentIds[0] : sub._id,
       title: sub.title,
       submissionType: sub.submissionType,
       excerpt: sub.excerpt,
@@ -285,6 +286,7 @@ class SubmissionService {
       readingTime: sub.readingTime,
       author: {
         _id: sub.userId._id,
+        name: sub.userId.name,
         username: sub.userId.username,
         profileImage: sub.userId.profileImage
       }
