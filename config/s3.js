@@ -57,6 +57,69 @@ class S3ImageService {
   }
 
   /**
+   * Compress image with specific quality
+   * @param {Object} sharpInstance - Sharp instance
+   * @param {number} quality - Quality level (0-100)
+   * @param {string} format - Image format
+   * @returns {Promise<Object>} Compressed buffer and quality used
+   */
+  static async compressWithQuality(sharpInstance, quality, format) {
+    let optimizedBuffer;
+
+    if (format === 'jpeg') {
+      optimizedBuffer = await sharpInstance
+        .jpeg({ quality, progressive: true })
+        .toBuffer();
+    } else if (format === 'png') {
+      optimizedBuffer = await sharpInstance
+        .png({ compressionLevel: 8 })
+        .toBuffer();
+    } else {
+      optimizedBuffer = await sharpInstance.toBuffer();
+    }
+
+    return { optimizedBuffer, qualityUsed: quality };
+  }
+
+  /**
+   * Compress image with minimum file size requirement
+   * @param {Buffer} originalBuffer - Original image buffer
+   * @param {number} minimumFileSize - Minimum file size in bytes
+   * @param {string} format - Image format
+   * @returns {Promise<Object>} Optimized buffer and quality used
+   */
+  static async compressWithMinimumSize(originalBuffer, minimumFileSize, format) {
+    // If original < 100KB, return as-is without compression
+    if (originalBuffer.length < minimumFileSize) {
+      return {
+        optimizedBuffer: originalBuffer,
+        qualityUsed: 100
+      };
+    }
+
+    // Try quality levels: 80%, 85%, 90%, 95%
+    const qualityLevels = [80, 85, 90, 95];
+    let lastBuffer = null;
+    let lastQuality = 80;
+
+    for (const quality of qualityLevels) {
+      const sharpCopy = sharp(originalBuffer);
+      const result = await this.compressWithQuality(sharpCopy, quality, format);
+
+      // Found quality that meets minimum size
+      if (result.optimizedBuffer.length >= minimumFileSize) {
+        return result;
+      }
+
+      lastBuffer = result.optimizedBuffer;
+      lastQuality = quality;
+    }
+
+    // Even 95% is < 100KB, return best effort
+    return { optimizedBuffer: lastBuffer, qualityUsed: lastQuality };
+  }
+
+  /**
    * Upload image to S3 with optimization
    * @param {Buffer} imageBuffer - Image buffer
    * @param {string} originalName - Original filename
@@ -78,7 +141,8 @@ class S3ImageService {
         maxWidth = 1200,
         maxHeight = 800,
         format = 'jpeg',
-        folder = 'articles' // articles, essays, etc.
+        folder = 'articles', // articles, essays, etc.
+        minimumFileSize = null
       } = options;
 
       // Generate unique filename
@@ -86,32 +150,29 @@ class S3ImageService {
       const fileName = `${folder}/${Date.now()}-${uuidv4()}.${fileExtension}`;
 
       // Optimize image with Sharp
-      let optimizedBuffer;
       const sharpInstance = sharp(imageBuffer);
-      
+
       // Get image metadata
       const metadata = await sharpInstance.metadata();
-      
+
       // Resize if needed
+      let processedBuffer = imageBuffer;
       if (metadata.width > maxWidth || metadata.height > maxHeight) {
         sharpInstance.resize(maxWidth, maxHeight, {
           fit: 'inside',
           withoutEnlargement: true
         });
+        // Get resized buffer for minimum size compression
+        processedBuffer = await sharpInstance.toBuffer();
       }
 
-      // Convert and compress
-      if (format === 'jpeg') {
-        optimizedBuffer = await sharpInstance
-          .jpeg({ quality, progressive: true })
-          .toBuffer();
-      } else if (format === 'png') {
-        optimizedBuffer = await sharpInstance
-          .png({ compressionLevel: 8 })
-          .toBuffer();
-      } else {
-        optimizedBuffer = await sharpInstance.toBuffer();
-      }
+      // Convert and compress with minimum size support
+      const compressionResult = minimumFileSize
+        ? await this.compressWithMinimumSize(processedBuffer, minimumFileSize, format)
+        : await this.compressWithQuality(sharp(processedBuffer), quality, format);
+
+      const optimizedBuffer = compressionResult.optimizedBuffer;
+      const qualityUsed = compressionResult.qualityUsed;
 
       // Upload to S3
       const upload = new Upload({
@@ -150,7 +211,9 @@ class S3ImageService {
         dimensions: {
           width: metadata.width,
           height: metadata.height
-        }
+        },
+        qualityUsed,
+        appliedMinimumSize: !!minimumFileSize
       };
 
     } catch (error) {

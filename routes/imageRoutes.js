@@ -30,31 +30,39 @@ router.post('/upload', upload.single('image'), async (req, res) => {
       });
     }
 
-    const { submissionType = 'article', alt = '', caption = '', temporary = 'false' } = req.body;
+    const { submissionType = 'article', alt = '', caption = '', temporary = 'false', folder: customFolder } = req.body;
     const isTemporary = temporary === 'true' || temporary === true;
 
     // Determine folder based on submission type and temporary status
     const folderMap = {
       'article': 'articles',
-      'cinema_essay': 'essays', 
+      'cinema_essay': 'essays',
       'story': 'stories',
       'poem': 'poems'
     };
 
-    const baseFolder = folderMap[submissionType] || 'general';
+    // Use custom folder if provided (e.g., 'profiles'), otherwise use folderMap
+    const baseFolder = customFolder === 'profiles' ? 'profiles' : (folderMap[submissionType] || 'general');
     const folder = isTemporary ? `temp/${baseFolder}` : baseFolder;
 
     // Upload using environment-aware service (S3 for prod, local for dev)
+    const uploadOptions = {
+      quality: 85,
+      maxWidth: 1200,
+      maxHeight: 800,
+      format: 'jpeg',
+      folder: folder
+    };
+
+    // Add minimum file size requirement for profile images
+    if (folder === 'profiles') {
+      uploadOptions.minimumFileSize = 100 * 1024; // 100KB minimum for profiles
+    }
+
     const uploadResult = await ImageService.uploadImage(
       req.file.buffer,
       req.file.originalname,
-      {
-        quality: 85,
-        maxWidth: 1200,
-        maxHeight: 800,
-        format: 'jpeg',
-        folder: folder
-      }
+      uploadOptions
     );
 
     if (!uploadResult.success) {
@@ -77,6 +85,8 @@ router.post('/upload', upload.single('image'), async (req, res) => {
         originalSize: uploadResult.originalSize,
         compressionRatio: uploadResult.compressionRatio,
         dimensions: uploadResult.dimensions,
+        qualityUsed: uploadResult.qualityUsed,
+        appliedMinimumSize: uploadResult.appliedMinimumSize,
         alt: alt,
         caption: caption,
         temporary: isTemporary
