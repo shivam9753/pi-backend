@@ -6,7 +6,6 @@
  */
 
 const { initializeSecrets } = require('./config/initSecrets');
-const { ImageService } = require('./config/imageService');
 const emailService = require('./services/emailService');
 
 // Async startup function
@@ -16,6 +15,10 @@ async function startServer() {
 
     // Step 1: Initialize secrets from AWS (or fall back to .env)
     await initializeSecrets();
+
+    // IMPORTANT: Load ImageService AFTER secrets are initialized
+    // This ensures AWS_REGION is set before S3 client initializes
+    const { ImageService } = require('./config/imageService');
 
     // Step 2: Initialize email service with credentials from secrets
     emailService.initialize();
