@@ -31,6 +31,9 @@ async function initializeSecrets() {
     console.log(`🔍 Fetching secrets from AWS Secrets Manager...`);
     const secrets = await awsSecretsService.getSecrets();
 
+    // Debug: Log what keys are in the secrets object
+    console.log(`🔧 DEBUG: Secrets keys: ${Object.keys(secrets).join(', ')}`);
+
     // Set secrets as environment variables
     process.env.ATLAS_URL = secrets.mongodbUrl;
     process.env.JWT_SECRET = secrets.jwtSecret;
