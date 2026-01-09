@@ -139,29 +139,50 @@ router.get('/top-content', async (req, res) => {
     // Calculate date range based on period
     let dateFilter = {};
     const now = new Date();
-    
+    let startDate = null;
+
     switch (period) {
       case 'week':
-        dateFilter.publishedAt = { $gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) };
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
         break;
       case 'month':
-        dateFilter.publishedAt = { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) };
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
         break;
       case 'all':
       default:
         // No date filter for 'all'
+        startDate = null;
         break;
+    }
+
+    // Build match filter: use publishedAt OR reviewedAt OR createdAt so we don't miss docs
+    const matchFilter = { status: 'published' };
+
+    if (startDate) {
+      matchFilter.$or = [
+        { publishedAt: { $gte: startDate } },
+        { reviewedAt: { $gte: startDate } },
+        { createdAt: { $gte: startDate } }
+      ];
     }
 
     // Add type filter if specified
     if (type && type.trim() !== '') {
-      dateFilter.submissionType = type;
+      matchFilter.submissionType = type;
     }
 
-    const matchFilter = {
-      status: 'published',
-      ...dateFilter
-    };
+    // Diagnostic: count documents that match the filter and log a sample if empty
+    try {
+      const matchingCount = await Submission.countDocuments(matchFilter);
+      console.log('🔎 Submissions matching filter:', matchingCount, matchFilter);
+      if (matchingCount === 0) {
+        // Log a sample published submission (if any) to inspect field shapes
+        const sample = await Submission.findOne({}).lean();
+        console.log('🔎 Sample submission (any):', sample ? sample : 'none');
+      }
+    } catch (diagErr) {
+      console.error('❌ Diagnostics failed while counting submissions:', diagErr);
+    }
 
     // Parallel queries for different top content categories
     const [topByViews, trending] = await Promise.all([
@@ -248,14 +269,105 @@ router.get('/top-content', async (req, res) => {
       ])
     ]);
 
+    // If no results were found for the requested period (e.g. last month),
+    // fall back to all-time results so the dashboard isn't empty for low-frequency sites.
+    let finalTopByViews = topByViews || [];
+    let finalTrending = trending || [];
+
+    if ((finalTopByViews.length === 0 || finalTrending.length === 0) && period !== 'all') {
+      console.log('⚠️ Top content empty for period', period, '— falling back to all-time results');
+
+      const [allTimeTopByViews, allTimeTrending] = await Promise.all([
+        Submission.aggregate([
+          { $match: { status: 'published' } },
+          { 
+            $lookup: {
+              from: 'users',
+              localField: 'userId',
+              foreignField: '_id',
+              as: 'author'
+            }
+          },
+          { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
+          {
+            $project: {
+              _id: 1,
+              title: 1,
+              submissionType: 1,
+              viewCount: { $ifNull: ['$viewCount', 0] },
+              publishedAt: 1,
+              'seo.slug': 1,
+              author: {
+                name: '$author.name',
+                username: '$author.username',
+                _id: '$author._id'
+              }
+            }
+          },
+          { $sort: { viewCount: -1 } },
+          { $limit: limitNum }
+        ]),
+
+        Submission.aggregate([
+          { 
+            $match: { status: 'published', recentViews: { $gt: 0 } }
+          },
+          { 
+            $lookup: {
+              from: 'users',
+              localField: 'userId',
+              foreignField: '_id',
+              as: 'author'
+            }
+          },
+          { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
+          {
+            $addFields: {
+              trendingScore: {
+                $multiply: [
+                  { $divide: [
+                    { $ifNull: ['$recentViews', 0] },
+                    { $add: [{ $ifNull: ['$viewCount', 0] }, 1] }
+                  ]},
+                  100
+                ]
+              }
+            }
+          },
+          {
+            $project: {
+              _id: 1,
+              title: 1,
+              submissionType: 1,
+              viewCount: { $ifNull: ['$viewCount', 0] },
+              recentViews: { $ifNull: ['$recentViews', 0] },
+              trendingScore: 1,
+              publishedAt: 1,
+              'seo.slug': 1,
+              author: {
+                name: '$author.name',
+                username: '$author.username',
+                _id: '$author._id'
+              }
+            }
+          },
+          { $sort: { trendingScore: -1 } },
+          { $limit: limitNum }
+        ])
+      ]);
+
+      finalTopByViews = allTimeTopByViews || [];
+      finalTrending = allTimeTrending || [];
+    }
+
     const result = {
-      topByViews: topByViews.map(item => ({
+      topByViews: finalTopByViews.map(item => ({
         ...item,
         author: item.author?.name || item.author?.username || 'Unknown',
         slug: item.seo?.slug || item._id
       })),
       topByEngagement: [], // Could implement engagement metrics later
-      trending: trending.map(item => ({
+      trending: finalTrending.map(item => ({
         ...item,
         author: item.author?.name || item.author?.username || 'Unknown',
         slug: item.seo?.slug || item._id
@@ -367,11 +479,18 @@ router.get('/views-time-series', async (req, res) => {
         break;
     }
 
+    // Use a normalized eventDate (publishedAt || reviewedAt || createdAt) so we don't miss records
     const timeSeriesData = await Submission.aggregate([
+      {
+        $addFields: {
+          eventDate: { $ifNull: ['$publishedAt', { $ifNull: ['$reviewedAt', '$createdAt'] }] },
+          viewsVal: { $ifNull: ['$viewCount', 0] }
+        }
+      },
       {
         $match: {
           status: 'published',
-          publishedAt: { $gte: startDate }
+          eventDate: { $gte: startDate }
         }
       },
       {
@@ -379,11 +498,11 @@ router.get('/views-time-series', async (req, res) => {
           _id: {
             $dateToString: {
               format: dateFormat,
-              date: '$publishedAt'
+              date: '$eventDate'
             }
           },
           posts: { $sum: 1 },
-          views: { $sum: { $ifNull: ['$viewCount', 0] } }
+          views: { $sum: '$viewsVal' }
         }
       },
       {
@@ -398,6 +517,9 @@ router.get('/views-time-series', async (req, res) => {
         }
       }
     ]);
+
+    // Diagnostic log
+    console.log('🔎 Time series points returned:', timeSeriesData.length);
 
     // Calculate total views and growth
     const totalViews = timeSeriesData.reduce((sum, day) => sum + day.views, 0);
