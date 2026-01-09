@@ -101,6 +101,9 @@ class AWSSecretsService {
         throw new Error(`Missing required secret fields: ${missingFields.join(', ')}`);
       }
 
+      // Optional S3 fields (only required for production image uploads)
+      // awsAccessKeyId, awsSecretAccessKey, s3BucketName, cloudfrontDomain
+
       // Cache the secrets
       this.cachedSecrets = secrets;
       this.cacheExpiry = Date.now() + this.CACHE_DURATION;

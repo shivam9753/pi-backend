@@ -37,10 +37,29 @@ async function initializeSecrets() {
     process.env.EMAIL_USER = secrets.emailUser;
     process.env.EMAIL_PASSWORD = secrets.emailPassword;
 
+    // Set S3 credentials if available (for production)
+    if (secrets.awsAccessKeyId && secrets.awsSecretAccessKey) {
+      process.env.AWS_ACCESS_KEY_ID = secrets.awsAccessKeyId;
+      process.env.AWS_SECRET_ACCESS_KEY = secrets.awsSecretAccessKey;
+      console.log('   ✅ S3 credentials loaded from secrets');
+    }
+
+    // Set S3 bucket configuration if available
+    if (secrets.s3BucketName) {
+      process.env.S3_BUCKET_NAME = secrets.s3BucketName;
+      process.env.STORAGE_TYPE = 's3'; // Auto-enable S3 in production
+      console.log(`   ✅ S3 bucket configured: ${secrets.s3BucketName}`);
+    }
+
+    if (secrets.cloudfrontDomain) {
+      process.env.CLOUDFRONT_DOMAIN = secrets.cloudfrontDomain;
+    }
+
     console.log('✅ Secrets loaded from AWS Secrets Manager');
     console.log(`   Environment: ${process.env.NODE_ENV}`);
     console.log(`   Database: ${getDbNameFromUrl(secrets.mongodbUrl)}`);
     console.log(`   Email: ${secrets.emailUser}`);
+    console.log(`   Storage: ${process.env.STORAGE_TYPE || 'local'}`);
 
     return { source: 'aws', success: true };
 
