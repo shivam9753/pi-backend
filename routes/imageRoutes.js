@@ -65,21 +65,39 @@ router.post('/upload', upload.single('image'), async (req, res) => {
       uploadOptions
     );
 
-    if (!uploadResult.success) {
+    if (!uploadResult || !uploadResult.success) {
       return res.status(500).json({
         success: false,
         message: 'Failed to upload image',
-        error: uploadResult.error
+        error: uploadResult ? uploadResult.error : 'Unknown upload failure'
       });
     }
 
-    // Return image data for frontend
+    // Determine the best public URL to return to clients. Prefer CDN URL when available.
+    const publicUrl = uploadResult.cdnUrl || uploadResult.url || uploadResult.fileUrl || '';
+
+    // If the server is configured to use S3 (production) but ImageService fell back to local storage,
+    // fail the upload to avoid returning developer-local URLs in production.
+    try {
+      const storageType = ImageService.getStorageType ? ImageService.getStorageType() : (process.env.NODE_ENV === 'production' ? 's3' : 'local');
+      if (storageType === 's3' && uploadResult.fallbackUsed) {
+        console.error('❌ ImageService reported fallbackUsed in S3 mode — aborting to avoid returning local URLs in production');
+        return res.status(500).json({
+          success: false,
+          message: 'S3 upload expected but fallback to local storage occurred. Check server S3 configuration.'
+        });
+      }
+    } catch (e) {
+      console.warn('Could not determine storage type for uploaded image:', e && e.message ? e.message : e);
+    }
+
+    // Return image data for frontend, exposing a canonical public URL in `url`.
     res.json({
       success: true,
       image: {
-        url: uploadResult.url,
-        cdnUrl: uploadResult.cdnUrl,
-        s3Key: uploadResult.fileName,
+        url: publicUrl,
+        cdnUrl: uploadResult.cdnUrl || null,
+        s3Key: uploadResult.fileName || uploadResult.key || null,
         originalName: req.file.originalname,
         size: uploadResult.size,
         originalSize: uploadResult.originalSize,
@@ -89,7 +107,8 @@ router.post('/upload', upload.single('image'), async (req, res) => {
         appliedMinimumSize: uploadResult.appliedMinimumSize,
         alt: alt,
         caption: caption,
-        temporary: isTemporary
+        temporary: isTemporary,
+        fallbackUsed: !!uploadResult.fallbackUsed
       }
     });
 
@@ -313,6 +332,20 @@ router.post('/move-to-permanent', async (req, res) => {
       message: 'Internal server error',
       error: error.message
     });
+  }
+});
+
+// GET /api/images/health - Storage backend health check
+router.get('/health', async (req, res) => {
+  try {
+    const health = await ImageService.healthCheck();
+    if (!health || health.success === false) {
+      return res.status(500).json({ success: false, health });
+    }
+    res.json({ success: true, health });
+  } catch (error) {
+    console.error('ImageService health check error:', error);
+    res.status(500).json({ success: false, message: 'ImageService health check failed', error: error.message });
   }
 });
 

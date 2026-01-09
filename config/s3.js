@@ -1,48 +1,46 @@
 const { S3Client } = require('@aws-sdk/client-s3');
 const { Upload } = require('@aws-sdk/lib-storage');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { GetObjectCommand, DeleteObjectCommand, CopyObjectCommand } = require('@aws-sdk/client-s3');
+const { GetObjectCommand, DeleteObjectCommand, CopyObjectCommand, HeadBucketCommand } = require('@aws-sdk/client-s3');
 const sharp = require('sharp');
 const { v4: uuidv4 } = require('uuid');
 
 // S3 Client Configuration with validation
 let s3Client;
 let credentialsValid = false;
+let detectedRegion = process.env.AWS_REGION || 'us-east-1';
 
 try {
-  // Validate required AWS credentials
+  // Read AWS credentials (may be absent when using IAM role / EC2/ECS task role)
   const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
   const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-  const region = process.env.AWS_REGION || 'us-east-1';
-  
-  if (!accessKeyId || !secretAccessKey) {
-    console.warn('⚠️  AWS credentials not found in environment variables');
-    console.warn('🔧 Required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY');
-    throw new Error('Missing AWS credentials');
+  const region = detectedRegion;
+
+  if (accessKeyId && secretAccessKey && accessKeyId !== 'your-aws-access-key' && secretAccessKey !== 'your-aws-secret-key') {
+    // Use explicit credentials
+    s3Client = new S3Client({
+      region,
+      credentials: {
+        accessKeyId,
+        secretAccessKey
+      }
+    });
+    credentialsValid = true;
+    console.log('✅ AWS S3 Client initialized with explicit credentials');
+    console.log(`🔧 Region: ${region}`);
+    console.log(`🔧 Access Key: ${accessKeyId.substring(0, 4)}***`);
+  } else {
+    // No explicit credentials - rely on default provider chain (IAM role, env, or shared config)
+    s3Client = new S3Client({ region });
+    credentialsValid = true; // optimistic - final connectivity checked by healthCheck
+    console.log('ℹ️ AWS S3 Client initialized using default credential provider chain (no explicit AWS keys found)');
+    console.log(`🔧 Region: ${region}`);
   }
-  
-  if (accessKeyId === 'your-aws-access-key' || secretAccessKey === 'your-aws-secret-key') {
-    console.warn('⚠️  AWS credentials appear to be placeholder values');
-    throw new Error('AWS credentials contain placeholder values');
-  }
-  
-  s3Client = new S3Client({
-    region,
-    credentials: {
-      accessKeyId,
-      secretAccessKey,
-    },
-  });
-  
-  credentialsValid = true;
-  console.log('✅ AWS S3 Client initialized successfully');
-  console.log(`🔧 Region: ${region}`);
-  console.log(`🔧 Access Key: ${accessKeyId.substring(0, 4)}***`);
-  
 } catch (error) {
-  console.warn('❌ Failed to initialize AWS S3 Client:', error.message);
+  console.warn('❌ Failed to initialize AWS S3 Client:', error && error.message ? error.message : error);
   console.warn('🔧 S3 upload functionality will be unavailable');
   s3Client = null;
+  credentialsValid = false;
 }
 
 const BUCKET_NAME = process.env.S3_BUCKET_NAME || 'poems-india-images';
@@ -50,10 +48,31 @@ const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN; // Optional CDN domain
 
 class S3ImageService {
   /**
-   * Check if S3 service is available and properly configured
+   * Check if S3 service is reasonably configured (client exists). This is a fast check.
    */
   static isAvailable() {
-    return s3Client !== null && credentialsValid;
+    return !!s3Client && credentialsValid;
+  }
+
+  /**
+   * Do an active health check against the configured bucket (async).
+   */
+  static async healthCheck() {
+    if (!s3Client) {
+      return { success: false, error: 'S3 client not initialized' };
+    }
+
+    try {
+      // Attempt a HeadBucket to verify access to the configured bucket
+      if (!BUCKET_NAME) {
+        return { success: false, error: 'S3 bucket name not configured' };
+      }
+
+      await s3Client.send(new HeadBucketCommand({ Bucket: BUCKET_NAME }));
+      return { success: true, storageType: 's3', bucket: BUCKET_NAME, region: detectedRegion };
+    } catch (err) {
+      return { success: false, error: err && err.message ? err.message : String(err) };
+    }
   }
 
   /**
@@ -127,11 +146,11 @@ class S3ImageService {
    * @returns {Promise<Object>} Upload result with URL
    */
   static async uploadImage(imageBuffer, originalName, options = {}) {
-    // Check if S3 service is available before attempting upload
-    if (!this.isAvailable()) {
+    // Check if S3 client exists before attempting upload
+    if (!s3Client) {
       return {
         success: false,
-        error: 'AWS S3 service is not available - credentials not properly configured'
+        error: 'AWS S3 client is not initialized on the server'
       };
     }
 
@@ -174,7 +193,7 @@ class S3ImageService {
       const optimizedBuffer = compressionResult.optimizedBuffer;
       const qualityUsed = compressionResult.qualityUsed;
 
-      // Upload to S3
+      // Upload to S3 using the lib-storage Upload helper
       const upload = new Upload({
         client: s3Client,
         params: {
@@ -192,12 +211,14 @@ class S3ImageService {
       });
 
       const result = await upload.done();
-      
-      // Generate URLs
-      const s3Url = result.Location;
-      const cdnUrl = CLOUDFRONT_DOMAIN 
-        ? `https://${CLOUDFRONT_DOMAIN}/${fileName}`
-        : s3Url;
+
+      // Construct S3 URL if SDK didn't include Location
+      const region = detectedRegion || process.env.AWS_REGION || 'us-east-1';
+      const s3Url = result && result.Location
+        ? result.Location
+        : `https://${BUCKET_NAME}.s3.${region}.amazonaws.com/${fileName}`;
+
+      const cdnUrl = CLOUDFRONT_DOMAIN ? `https://${CLOUDFRONT_DOMAIN}/${fileName}` : s3Url;
 
       return {
         success: true,
@@ -217,10 +238,10 @@ class S3ImageService {
       };
 
     } catch (error) {
-      console.error('S3 Upload Error:', error);
+      console.error('S3 Upload Error:', error && error.message ? error.message : error);
       return {
         success: false,
-        error: error.message
+        error: error && error.message ? error.message : String(error)
       };
     }
   }

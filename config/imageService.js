@@ -39,61 +39,52 @@ class ImageService {
     console.log(`🔧 S3 Config: Bucket=${process.env.S3_BUCKET_NAME}, Region=${process.env.AWS_REGION}`);
     console.log(`🔧 S3 Service available: ${!!S3ImageService}`);
     
-    // Try S3 upload first if configured for S3
+    // When production intends to use S3, we should NOT silently fall back to local storage.
     if (storageType === 's3') {
       console.log('🔧 DEBUG: Attempting S3 upload...');
       console.log('🔧 DEBUG: S3ImageService available:', !!S3ImageService);
       
       if (!S3ImageService) {
-        console.log('🔧 DEBUG: S3ImageService is null - falling back to local storage');
-      } else if (!S3ImageService.isAvailable()) {
-        console.log('🔧 DEBUG: S3ImageService not properly configured - falling back to local storage');
-      } else {
-        try {
-          console.log('🔧 DEBUG: Calling S3ImageService.uploadImage...');
-          const result = await S3ImageService.uploadImage(imageBuffer, originalName, options);
-          console.log('🔧 DEBUG: S3 upload result:', result.success ? 'SUCCESS' : 'FAILED');
-          
-          if (result.success) {
-            console.log(`✅ Image uploaded successfully to S3: ${result.url}`);
-            return result;
-          } else {
-            console.log('🔧 DEBUG: S3 upload failed, trying local storage fallback...');
-          }
-        } catch (s3Error) {
-          console.error('🔧 DEBUG: S3 upload threw error:', s3Error.message);
-          console.log('🔧 DEBUG: Falling back to local storage...');
-        }
-      }
-      
-      // Fallback to local storage if S3 fails or is not available
-      console.log('🔧 DEBUG: Using local storage as fallback for S3...');
-      try {
-        await LocalImageService.initializeUploadDir();
-        const fallbackResult = await LocalImageService.uploadImage(imageBuffer, originalName, options);
-        
-        if (fallbackResult.success) {
-          console.log('✅ Image uploaded successfully using local storage fallback');
-          return {
-            ...fallbackResult,
-            fallbackUsed: true,
-            fallbackReason: 'S3 service unavailable'
-          };
-        } else {
-          return {
-            success: false,
-            error: `Both S3 and local storage failed: ${fallbackResult.error}`
-          };
-        }
-      } catch (fallbackError) {
-        console.error('❌ Local storage fallback also failed:', fallbackError);
+        const errMsg = 'S3ImageService unavailable: AWS SDK or S3 module not loaded. Aborting upload to avoid using local storage in production.';
+        console.error('❌', errMsg);
         return {
           success: false,
-          error: `S3 upload failed and local storage fallback failed: ${fallbackError.message}`
+          error: errMsg
+        };
+      }
+
+      if (typeof S3ImageService.isAvailable === 'function' && !S3ImageService.isAvailable()) {
+        const errMsg = 'S3ImageService is not properly configured. Aborting upload to avoid using local storage in production.';
+        console.error('❌', errMsg);
+        return {
+          success: false,
+          error: errMsg
+        };
+      }
+
+      try {
+        console.log('🔧 DEBUG: Calling S3ImageService.uploadImage...');
+        const result = await S3ImageService.uploadImage(imageBuffer, originalName, options);
+        console.log('🔧 DEBUG: S3 upload result:', result && result.success ? 'SUCCESS' : 'FAILED');
+        if (result && result.success) {
+          console.log(`✅ Image uploaded successfully to S3: ${result.url}`);
+          return result;
+        }
+        // If S3 returned failure, bubble it up rather than falling back
+        console.error('❌ S3 upload failed:', result && result.error ? result.error : 'unknown error');
+        return {
+          success: false,
+          error: result && result.error ? result.error : 'S3 upload failed'
+        };
+      } catch (s3Error) {
+        console.error('🔧 DEBUG: S3 upload threw error:', s3Error.message || s3Error);
+        return {
+          success: false,
+          error: s3Error.message || String(s3Error)
         };
       }
     } else {
-      // Use local storage directly
+      // Use local storage directly (development/local config)
       try {
         await LocalImageService.initializeUploadDir();
         const result = await LocalImageService.uploadImage(imageBuffer, originalName, options);
@@ -128,17 +119,19 @@ class ImageService {
       
       if (storageType === 's3') {
         if (!S3ImageService) {
-          throw new Error('S3 service not available - AWS SDK not installed');
+          const errMsg = 'S3ImageService unavailable: cannot delete from S3 in this environment.';
+          console.error('❌', errMsg);
+          return { success: false, error: errMsg };
         }
         result = await S3ImageService.deleteImage(fileName);
       } else {
         result = await LocalImageService.deleteImage(fileName);
       }
 
-      if (result.success) {
+      if (result && result.success) {
         console.log(`✅ Image deleted successfully: ${fileName}`);
       } else {
-        console.error(`❌ Image deletion failed: ${result.error}`);
+        console.error(`❌ Image deletion failed: ${result && result.error ? result.error : 'unknown error'}`);
       }
 
       return result;
@@ -211,7 +204,13 @@ class ImageService {
     
     try {
       if (storageType === 's3') {
-        // Check S3 connectivity
+        if (!S3ImageService || (typeof S3ImageService.isAvailable === 'function' && !S3ImageService.isAvailable())) {
+          return { success: false, storageType: 's3', error: 'S3ImageService not available or not configured' };
+        }
+        // Optionally call a lightweight S3 connectivity check if implemented
+        if (typeof S3ImageService.healthCheck === 'function') {
+          return await S3ImageService.healthCheck();
+        }
         return {
           success: true,
           storageType: 's3',
