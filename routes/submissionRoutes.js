@@ -1900,6 +1900,31 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
     submission.updatedAt = new Date();
     
     await submission.save();
+
+    // If the request explicitly set status to published, invoke the canonical publish workflow
+    // This ensures slug uniqueness, publish-side effects and any publish hooks run.
+    // Require reviewer/admin privileges for publishing (same as the dedicated publish endpoint).
+    if (req.body.status === SUBMISSION_STATUS.PUBLISHED) {
+      if (!isAdmin && !isReviewer) {
+        return res.status(403).json({ message: 'Publishing requires reviewer or admin privileges' });
+      }
+
+      try {
+        const publishedSubmission = await SubmissionService.publishWithSEO(req.params.id, seo || {}, req.user._id);
+        return res.json({
+          success: true,
+          message: 'Submission published successfully',
+          submission: publishedSubmission,
+          url: `/post/${publishedSubmission.seo && publishedSubmission.seo.slug ? publishedSubmission.seo.slug : ''}`
+        });
+      } catch (err) {
+        if (err.message === 'Slug already exists') {
+          return res.status(400).json({ message: err.message });
+        }
+        console.error('Error during publish workflow:', err);
+        return res.status(500).json({ message: 'Error publishing submission', error: err.message });
+      }
+    }
     
     res.json({
       success: true,
