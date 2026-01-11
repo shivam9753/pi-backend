@@ -29,7 +29,18 @@ const upload = multer({
 // GET /api/users/trending - Get trending authors based on featured content views (public)
 router.get('/trending', async (req, res) => {
   try {
-    const { limit = 5 } = req.query;
+    const { limit = 5, windowDays } = req.query;
+
+    // build a reusable match for featured content; optionally include time-window
+    const featuredMatch = { isFeatured: true };
+    if (windowDays) {
+      const days = parseInt(windowDays, 10);
+      if (!isNaN(days) && days > 0) {
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        // filter by content's featuredAt timestamp
+        featuredMatch.featuredAt = { $gte: cutoff };
+      }
+    }
 
     const pipeline = [
       // Join contents with submissions to get author info
@@ -43,8 +54,8 @@ router.get('/trending', async (req, res) => {
       },
       { $unwind: '$submission' },
 
-      // Filter for featured content only
-      { $match: { isFeatured: true } },
+      // Filter for featured content (and optional recent window)
+      { $match: featuredMatch },
 
       // Join with users to get author details
       {
