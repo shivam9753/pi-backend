@@ -158,6 +158,15 @@ app.use('/api/analytics/search', searchAnalyticsRoutes);
 app.use('/api/writing-programs', writingProgramRoutes);
 app.use('/api/admin', require('./routes/adminRoutes'));
 
+// Sitemap route (public)
+try {
+  const sitemapRoute = require('./routes/sitemap');
+  app.use('/', sitemapRoute);
+  console.log('✅ Sitemap route registered at /sitemap.xml');
+} catch (err) {
+  console.warn('⚠️ Could not register sitemap route:', err.message);
+}
+
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -18,6 +18,10 @@ const { SUBMISSION_STATUS } = require('../constants/status.constants');
 // Import ImageService for S3/local storage handling
 const { ImageService } = require('../config/imageService');
 
+// Import the new analysis service
+const AnalysisService = require('../services/analysisService');
+const analysisService = new AnalysisService();
+
 const router = express.Router();
 
 
@@ -1410,7 +1414,10 @@ router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId(
     }
     
     await submission.changeStatus(SUBMISSION_STATUS.ACCEPTED, req.user, notes || 'Unpublished by admin');
-    
+
+    // Clear sitemap cache when a published submission is unpublished
+    try { sitemapRoute.clearCache(); } catch (e) { /* noop */ }
+
     res.json({
       success: true,
       message: 'Submission unpublished successfully',
@@ -1432,6 +1439,9 @@ router.post('/:id/publish-with-seo', authenticateUser, requireReviewer, validate
   try {
     const seoData = req.body;
     const submission = await SubmissionService.publishWithSEO(req.params.id, seoData, req.user._id);
+    
+    // Clear sitemap cache on successful publish
+    try { sitemapRoute.clearCache(); } catch(e) { /* noop */ }
     
     res.json({
       success: true,
@@ -1483,10 +1493,7 @@ router.patch('/:id/seo', authenticateUser, requireReviewer, validateObjectId('id
   }
 });
 
-// Import the new analysis service
-const AnalysisService = require('../services/analysisService');
-const analysisService = new AnalysisService();
-
+// POST /:id/analyze - Analyze submission text
 router.post('/:id/analyze', validateObjectId('id'), async (req, res) => {
   try {
     const submissionId = req.params.id;
@@ -2097,6 +2104,7 @@ router.get('/most-viewed', validatePagination, async (req, res) => {
       submissionType
     } = req.query;
 
+   
     const limitNum = Math.min(parseInt(limit) || 10, 50);
 
     let mostViewedSubmissions = await Submission.findMostViewed(limitNum, timeframe);
