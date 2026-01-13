@@ -2105,6 +2105,7 @@ router.get('/most-viewed', validatePagination, async (req, res) => {
     } = req.query;
 
    
+
     const limitNum = Math.min(parseInt(limit) || 10, 50);
 
     let mostViewedSubmissions = await Submission.findMostViewed(limitNum, timeframe);
@@ -2329,7 +2330,7 @@ router.get('/analytics/performance', requireReviewer, async (req, res) => {
 });
 
 // GET /api/submissions/:id - Get submission by ID (MOVED TO END to avoid conflicts with /explore)
-router.get('/:id', validateObjectId('id'), async (req, res) => {
+router.get('/:id([0-9a-fA-F]{24}|[0-9a-fA-F\-]{36})', validateObjectId('id'), async (req, res) => {
   try {
     const submission = await SubmissionService.getSubmissionWithContent(req.params.id);
     res.json({ submission });
@@ -2636,6 +2637,59 @@ router.get('/responses/applications', authenticateUser, requireReviewer, async (
   } catch (error) {
     console.error('Error fetching applications:', error);
     res.status(500).json({ message: 'Error fetching applications', error: error.message });
+  }
+});
+
+// GET /api/submissions/random - Return random published submissions to boost discoverability
+router.get('/random', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 5, 10); // default 5, cap 10
+    const { type } = req.query;
+
+    // Build match stage
+    const match = { status: 'published' };
+    if (type && typeof type === 'string') {
+      match.submissionType = type;
+    }
+
+    const pipeline = [
+      { $match: match },
+      { $sample: { size: limit } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
+      { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          submissionType: 1,
+          excerpt: 1,
+          imageUrl: 1,
+          slug: '$seo.slug',
+          author: {
+            name: '$author.name'
+          }
+        }
+      }
+    ];
+
+    const submissions = await Submission.aggregate(pipeline);
+
+    res.json({
+      success: true,
+      submissions,
+      returned: submissions.length,
+      requestedLimit: limit
+    });
+  } catch (error) {
+    console.error('Error fetching random submissions:', error);
+    res.status(500).json({ success: false, message: 'Error fetching random submissions', error: error.message });
   }
 });
 
