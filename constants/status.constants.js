@@ -245,7 +245,9 @@ const STATUS_UTILS = {
         SUBMISSION_STATUS.ARCHIVED
       ],
       [SUBMISSION_STATUS.PUBLISHED]: [
-        SUBMISSION_STATUS.ARCHIVED
+        SUBMISSION_STATUS.ARCHIVED,
+        // Allow admin to unpublish and move back to 'accepted'
+        SUBMISSION_STATUS.ACCEPTED
       ]
     };
 
