@@ -420,6 +420,8 @@ router.get('/explore', validatePagination, async (req, res) => {
           excerpt: 1,
           submissionType: 1,
           publishedAt: '$reviewedAt',
+          // expose createdAt so clients can sort by creation time
+          createdAt: 1,
           readingTime: 1,
           viewCount: { $ifNull: ['$viewCount', 0] },
           imageUrl: 1,
@@ -439,6 +441,10 @@ router.get('/explore', validatePagination, async (req, res) => {
       case 'publishedAt':
       case 'latest':
         sortField = 'publishedAt';
+        break;
+      case 'createdAt':
+        // Support explicit creation-time sorting
+        sortField = 'createdAt';
         break;
       case 'viewCount':
       case 'popular':

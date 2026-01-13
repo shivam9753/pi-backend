@@ -325,29 +325,30 @@ contentSchema.methods.checkPublishStatus = async function() {
 // Rolling window view tracking method (same as Submission)
 contentSchema.methods.logView = async function(windowDays = 7) {
   const now = new Date();
-  const windowStart = new Date();
-  windowStart.setDate(windowStart.getDate() - windowDays);
+  const windowMs = windowDays * 24 * 60 * 60 * 1000;
+  // Use existing windowStartTime if present, otherwise treat as epoch 0
+  const windowStart = this.windowStartTime ? new Date(this.windowStartTime) : new Date(0);
 
-  // If this is the first view or window has shifted significantly, reset
-  if (!this.windowStartTime || this.windowStartTime < windowStart) {
-    this.windowStartTime = windowStart;
+  // If the current window has expired, reset recentViews and start new window at "now"
+  if (now - windowStart > windowMs) {
     this.recentViews = 1;
+    this.windowStartTime = now;
   } else {
-    this.recentViews += 1;
+    // Otherwise increment the current window counter
+    this.recentViews = (this.recentViews || 0) + 1;
   }
 
-  this.viewCount += 1;
+  // Always increment total views
+  this.viewCount = (this.viewCount || 0) + 1;
 
-  // Update the window start time to maintain the rolling window
-  this.windowStartTime = windowStart;
-
-  await this.save();
+  // Save using validateBeforeSave:false to avoid schema validation issues with legacy records
+  return await this.save({ validateBeforeSave: false });
 };
 
 // Get trending score (recent vs total views ratio)
 contentSchema.methods.getTrendingScore = function() {
-  if (this.viewCount === 0) return 0;
-  return Math.round((this.recentViews / this.viewCount) * 100);
+  if (!this.viewCount || this.viewCount === 0) return 0;
+  return Math.round(((this.recentViews || 0) / this.viewCount) * 100);
 };
 
 // Method to get full content with publication info

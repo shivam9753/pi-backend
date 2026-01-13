@@ -31,19 +31,19 @@ router.get('/trending', async (req, res) => {
   try {
     const { limit = 5, windowDays } = req.query;
 
-    // build a reusable match for featured content; optionally include time-window
-    const featuredMatch = { isFeatured: true };
+    // Build content match: require content to be featured and have recent activity
+    const contentMatch = { isFeatured: true, recentViews: { $gt: 0 } };
     if (windowDays) {
-      const days = parseInt(windowDays, 10);
-      if (!isNaN(days) && days > 0) {
-        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-        // filter by content's featuredAt timestamp
-        featuredMatch.featuredAt = { $gte: cutoff };
+      const days = Number.parseInt(windowDays, 10);
+      if (!Number.isNaN(days) && days > 0) {
+        // Do not filter by featuredAt/windowStartTime here — recentViews already captures activity in the rolling window.
+        // Keep cutoff available for reference if needed in the future.
+        // const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
       }
     }
 
     const pipeline = [
-      // Join contents with submissions to get author info
+      // Join contents with submissions to get author info and ensure published status
       {
         $lookup: {
           from: 'submissions',
@@ -54,8 +54,8 @@ router.get('/trending', async (req, res) => {
       },
       { $unwind: '$submission' },
 
-      // Filter for featured content (and optional recent window)
-      { $match: featuredMatch },
+      // Only consider published submissions and featured content with recent activity
+      { $match: { 'submission.status': 'published', ...contentMatch } },
 
       // Join with users to get author details
       {
@@ -68,34 +68,27 @@ router.get('/trending', async (req, res) => {
       },
       { $unwind: '$author' },
 
-      // Additional filter: only include featured authors
-      { $match: { 'author.isFeatured': true } },
+      // Sort so that the first item per author will be the content with highest recentViews
+      { $sort: { 'recentViews': -1 } },
 
-      // Group by author and sum view counts
+      // Group by author and sum recentViews (last N days). Also count featured pieces.
       {
         $group: {
           _id: '$author._id',
           author: { $first: '$author' },
-          totalViews: { $sum: '$viewCount' },
+          totalViews: { $sum: '$recentViews' },
           featuredCount: { $sum: 1 },
-          latestFeaturedContent: {
-            $first: {
-              _id: '$_id',
-              title: '$title',
-              viewCount: '$viewCount',
-              featuredAt: '$featuredAt'
-            }
-          }
+          latestFeaturedContent: { $first: { _id: '$_id', title: '$title', viewCount: '$viewCount', recentViews: '$recentViews', windowStartTime: '$windowStartTime' } }
         }
       },
 
-      // Sort by total views descending
+      // Rank authors by recent activity (sum of recentViews)
       { $sort: { totalViews: -1 } },
 
       // Limit results
-      { $limit: parseInt(limit) },
+      { $limit: Number.parseInt(limit) },
 
-      // Project final shape
+      // Project final shape expected by the frontend
       {
         $project: {
           _id: 1,
@@ -266,9 +259,9 @@ router.get('/:id/published-works', validateObjectId('id'), validatePagination, a
       works,
       pagination: {
         total: works.length,
-        limit: parseInt(req.query.limit) || 10,
-        skip: parseInt(req.query.skip) || 0,
-        hasMore: works.length === (parseInt(req.query.limit) || 10)
+        limit: Number.parseInt(req.query.limit) || 10,
+        skip: Number.parseInt(req.query.skip) || 0,
+        hasMore: works.length === (Number.parseInt(req.query.limit) || 10)
       }
     });
   } catch (error) {
