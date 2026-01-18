@@ -2,7 +2,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Content = require('../models/Content');
 const Submission = require('../models/Submission');
-const Analytics = require('../models/Analytics');
 const { authenticateUser, requireReviewer, requireAdmin } = require('../middleware/auth');
 const { validateObjectId, validatePagination } = require('../middleware/validation');
 const { mapSingleTag, filterUnmappedUuids, isUuidTag } = require('../utils/tagMapping');
@@ -267,29 +266,7 @@ router.get('/', validatePagination, async (req, res) => {
     
     // Log search query analytics (non-blocking)
     if (search && search.trim()) {
-      setImmediate(() => {
-        Analytics.create({
-          eventType: 'search_query',
-          eventData: {
-            query: search.trim(),
-            resultsCount: total,
-            filters: {
-              published,
-              type,
-              tags,
-              tag,
-              author,
-              userId,
-              sortBy,
-              order
-            }
-          },
-          userId: req.user?._id || null,
-          sessionId: req.sessionID || req.headers['x-session-id'] || 'anonymous',
-          userAgent: req.headers['user-agent'] || 'Unknown',
-          ip: req.ip || req.connection?.remoteAddress || 'Unknown'
-        }).catch(err => console.error('Analytics logging error:', err));
-      });
+      // Analytics logging removed (analytics DB dropped)
     }
     
     res.json(response);

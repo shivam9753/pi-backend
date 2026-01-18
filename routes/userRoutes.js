@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const User = require('../models/User');
-const Analytics = require('../models/Analytics');
+// Analytics model removed — analytics DB dropped
 const UserService = require('../services/userService');
 const { authenticateUser, requireAdmin } = require('../middleware/auth');
 const { 

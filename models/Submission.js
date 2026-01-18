@@ -144,7 +144,7 @@ const submissionSchema = new mongoose.Schema({
     canonical: {
       type: String,
       trim: true
-    },
+    }
   },
   // Draft-specific fields
   lastEditedAt: {
@@ -155,13 +155,7 @@ const submissionSchema = new mongoose.Schema({
     type: Date,
     index: true
   },
-  // Topic pitch reference for submissions created from topic pitches
-  topicPitchId: {
-    type: String,
-    ref: 'TopicPitch',
-    default: null,
-    index: true
-  },
+  // Topic pitch support removed
   viewCount: {
     type: Number,
     default: 0,

@@ -3,7 +3,7 @@ const multer = require('multer');
 const Submission = require('../models/Submission');
 const Content = require('../models/Content');
 const Review = require('../models/Review');
-const Analytics = require('../models/Analytics');
+// const Analytics = require('../models/Analytics'); // Analytics model removed — analytics DB dropped
 const SubmissionService = require('../services/submissionService');
 const { authenticateUser, requireReviewer, requireWriter, requireAdmin } = require('../middleware/auth');
 const { 
@@ -173,8 +173,7 @@ router.get('/review-queue', authenticateUser, requireReviewer, validatePaginatio
                 ]
               }
             ]
-          },
-          hasTopicPitch: { $ne: ['$topicPitchId', null] }
+          }
         }
       },
       {
@@ -190,7 +189,6 @@ router.get('/review-queue', authenticateUser, requireReviewer, validatePaginatio
           wordCount: 1,
           imageUrl: 1,
           isUrgent: 1,
-          hasTopicPitch: 1,
           isNewAuthor: 1,
           author: {
             _id: '$author._id',
@@ -211,9 +209,6 @@ router.get('/review-queue', authenticateUser, requireReviewer, validatePaginatio
     }
     if (quickRead === 'true') {
       pipeline.push({ $match: { readingTime: { $lte: 5 } } });
-    }
-    if (topicSubmission === 'true') {
-      pipeline.push({ $match: { hasTopicPitch: true } });
     }
 
     // Create count pipeline BEFORE adding pagination
@@ -268,8 +263,7 @@ router.get('/review-queue', authenticateUser, requireReviewer, validatePaginatio
         types: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'],
         urgent: urgent === 'true',
         newAuthor: newAuthor === 'true',
-        quickRead: quickRead === 'true',
-        topicSubmission: topicSubmission === 'true'
+        quickRead: quickRead === 'true'
       }
     });
   } catch (error) {
@@ -564,8 +558,7 @@ router.get('/', validatePagination, async (req, res) => {
       featured,
       includeTypes,
       search,
-      tag,
-      isTopicSubmission
+      tag
     } = req.query;
     
     // Build query based on parameters
@@ -592,13 +585,6 @@ router.get('/', validatePagination, async (req, res) => {
     // Featured filtering
     if (featured === 'true') query.isFeatured = true;
     if (featured === 'false') query.isFeatured = false;
-    
-    // Topic submission filtering
-    if (isTopicSubmission === 'true') {
-      query.topicPitchId = { $ne: null };
-    } else if (isTopicSubmission === 'false') {
-      query.topicPitchId = null;
-    }
     
     // Search filtering
     if (search) {
@@ -825,29 +811,7 @@ router.get('/', validatePagination, async (req, res) => {
     
     // Log search query analytics (non-blocking)
     if (search && search.trim()) {
-      setImmediate(() => {
-        Analytics.create({
-          eventType: 'search_query',
-          eventData: {
-            query: search.trim(),
-            resultsCount: total,
-            filters: { 
-              type: 'submissions',
-              status,
-              submissionType: type,
-              featured,
-              tag,
-              sortBy,
-              order,
-              isTopicSubmission
-            }
-          },
-          userId: req.user?._id || null,
-          sessionId: req.sessionID || req.headers['x-session-id'] || 'anonymous',
-          userAgent: req.headers['user-agent'] || 'Unknown',
-          ip: req.ip || req.connection?.remoteAddress || 'Unknown'
-        }).catch(err => console.error('Analytics logging error:', err));
-      });
+      // Analytics logging removed (analytics DB dropped)
     }
     
     res.json(response);
@@ -1647,7 +1611,7 @@ router.get('/drafts/my', authenticateUser, async (req, res) => {
 // POST /api/submissions/drafts - Create or update draft
 router.post('/drafts', authenticateUser, async (req, res) => {
   try {
-    const { title, description, submissionType, contents, draftId, topicPitchId } = req.body;
+    const { title, description, submissionType, contents, draftId } = req.body;
     
     if (!submissionType) {
       return res.status(400).json({ message: 'Submission type is required' });
@@ -1690,8 +1654,7 @@ router.post('/drafts', authenticateUser, async (req, res) => {
         submissionType,
         contentIds: createdContents.map(c => c._id),
         readingTime,
-        excerpt,
-        ...(topicPitchId && { topicPitchId })
+        excerpt
       });
     } else {
       // Create new draft
@@ -1700,8 +1663,7 @@ router.post('/drafts', authenticateUser, async (req, res) => {
         title,
         description,
         submissionType,
-        contentIds: [],
-        ...(topicPitchId && { topicPitchId })
+        contentIds: []
       };
       
       draft = await Submission.createDraft(submissionData);
@@ -2411,143 +2373,6 @@ router.post('/grievance', authenticateUser, async (req, res) => {
   } catch (error) {
     console.error('Grievance submission error:', error);
     res.status(500).json({ message: 'Error submitting grievance', error: error.message });
-  }
-});
-
-// POST /api/submissions/writing-program/:programId/apply - Submit writing program application
-router.post('/writing-program/:programId/apply', authenticateUser, validateObjectId('programId'), async (req, res) => {
-  try {
-    const { criteriaResponses, writingSamples } = req.body;
-    const programId = req.params.programId;
-    
-    // Import WritingProgram model
-    const WritingProgram = require('../models/WritingProgram');
-    
-    // Verify program exists and is accepting applications
-    const program = await WritingProgram.findById(programId);
-    if (!program) {
-      return res.status(404).json({ message: 'Writing program not found' });
-    }
-    
-    if (!program.canAcceptApplications()) {
-      return res.status(400).json({ message: 'This program is not currently accepting applications' });
-    }
-    
-    // Validate criteria responses
-    if (program.criteria.questions) {
-      for (const question of program.criteria.questions) {
-        if (question.required && !criteriaResponses[question.id]) {
-          return res.status(400).json({ 
-            message: `Response required for: ${question.question}` 
-          });
-        }
-      }
-    }
-    
-    // Validate writing samples if required
-    if (program.criteria.requiresWritingSamples) {
-      if (!writingSamples || !Array.isArray(writingSamples)) {
-        return res.status(400).json({ message: 'Writing samples are required for this program' });
-      }
-      
-      if (writingSamples.length < program.criteria.minWritingSamples) {
-        return res.status(400).json({ 
-          message: `Minimum ${program.criteria.minWritingSamples} writing samples required` 
-        });
-      }
-      
-      if (writingSamples.length > program.criteria.maxWritingSamples) {
-        return res.status(400).json({ 
-          message: `Maximum ${program.criteria.maxWritingSamples} writing samples allowed` 
-        });
-      }
-      
-      // Validate word count for each sample
-      for (const sample of writingSamples) {
-        if (!sample.title || !sample.content) {
-          return res.status(400).json({ message: 'Each writing sample must have a title and content' });
-        }
-        
-        const wordCount = sample.content.trim().split(/\s+/).length;
-        if (wordCount > program.criteria.maxWordCount) {
-          return res.status(400).json({ 
-            message: `Writing sample "${sample.title}" exceeds maximum word count of ${program.criteria.maxWordCount}` 
-          });
-        }
-      }
-    }
-    
-    const contentIds = [];
-    
-    // Create content for criteria responses
-    const criteriaContent = await Content.create({
-      title: `Application Response for ${program.title}`,
-      body: JSON.stringify(criteriaResponses, null, 2),
-      type: 'application_criteria',
-      submissionId: null
-    });
-    contentIds.push(criteriaContent._id);
-    
-    // Create content for writing samples
-    if (writingSamples && writingSamples.length > 0) {
-      for (const sample of writingSamples) {
-        const sampleContent = await Content.create({
-          title: sample.title,
-          body: sample.content,
-          type: 'writing_sample',
-          submissionId: null
-        });
-        contentIds.push(sampleContent._id);
-      }
-    }
-    
-    // Create submission
-    const submissionData = {
-      title: `Application: ${program.title}`,
-      description: `Application for writing program: ${program.title}`,
-      submissionType: 'writing_program_application',
-      userId: req.user._id,
-      contentIds: contentIds,
-      status: SUBMISSION_STATUS.SUBMITTED,
-      // Store program reference in metadata
-      metadata: {
-        programId: programId,
-        programTitle: program.title,
-        criteriaResponses: criteriaResponses
-      }
-    };
-    
-    const submission = await Submission.create(submissionData);
-    
-    // Update all content with submission reference
-    for (const contentId of contentIds) {
-      await Content.findByIdAndUpdate(contentId, { submissionId: submission._id });
-    }
-    
-    // Add initial history entry
-    await submission.addHistoryEntry('submitted', SUBMISSION_STATUS.SUBMITTED, req.user._id, req.user.role);
-    await submission.save();
-    
-    // Increment program applications count
-    await program.incrementApplications();
-    
-    res.status(201).json({
-      message: 'Application submitted successfully',
-      submission: {
-        _id: submission._id,
-        title: submission.title,
-        submissionType: submission.submissionType,
-        status: submission.status,
-        createdAt: submission.createdAt
-      },
-      program: {
-        title: program.title,
-        spotsRemaining: program.spotsRemaining - 1
-      }
-    });
-  } catch (error) {
-    console.error('Writing program application error:', error);
-    res.status(500).json({ message: 'Error submitting application', error: error.message });
   }
 });
 
