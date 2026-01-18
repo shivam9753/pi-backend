@@ -165,4 +165,37 @@ router.get('/content-types', async (req, res) => {
   }
 });
 
+// GET /analytics/overview
+// Overview metrics: total submissions, counts by status, published counts and view totals
+router.get('/overview', async (req, res) => {
+  try {
+    // (omit total submissions and per-status counts — not needed in lightweight overview)
+
+    // published view metrics
+    const viewsAgg = await Submission.aggregate([
+      { $match: { status: 'published' } },
+      { $group: {
+        _id: null,
+        totalViews: { $sum: { $ifNull: ['$viewCount', 0] } },
+        totalRecentViews: { $sum: { $ifNull: ['$recentViews', 0] } },
+        publishedCount: { $sum: 1 }
+      } }
+    ]);
+
+    const v = viewsAgg[0] || {};
+
+    // Only return the aggregated view metrics — omit detailed counts per request
+    const overview = {
+      publishedCount: v.publishedCount || 0,
+      totalViews: v.totalViews || 0,
+      totalRecentViews: v.totalRecentViews || 0
+    };
+
+    res.json({ success: true, overview });
+  } catch (error) {
+    console.error('❌ Analytics Overview Error:', error);
+    res.status(500).json({ error: 'Failed to fetch analytics overview', details: process.env.NODE_ENV === 'development' ? error.message : undefined });
+  }
+});
+
 module.exports = router;
