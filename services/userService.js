@@ -532,6 +532,74 @@ class UserService {
     }
   }
 
+  // New: Get users who have at least one published submission
+  static async getUsersWithPublished(options = {}) {
+    const { limit = 20, skip = 0, sortBy = 'name', order = 'desc' } = options;
+    const Submission = require('../models/Submission');
+
+    const sortOrder = order === 'asc' ? 1 : -1;
+
+    try {
+      // Aggregate published submissions grouped by userId
+      const pipeline = [
+        { $match: { status: SUBMISSION_STATUS.PUBLISHED } },
+        { $group: { _id: '$userId', publishedCount: { $sum: 1 } } },
+
+        // Join with users collection
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'user'
+          }
+        },
+        { $unwind: '$user' },
+
+        // Project only required minimal fields: id, name, profileImage
+        {
+          $project: {
+            _id: '$user._id',
+            name: { $ifNull: ['$user.name', '$user.username'] },
+            profileImage: '$user.profileImage'
+          }
+        },
+
+        // Sorting
+        { $sort: { [sortBy]: sortOrder } },
+
+        // Pagination
+        { $skip: Number.parseInt(skip) },
+        { $limit: Number.parseInt(limit) }
+      ];
+
+      const users = await Submission.aggregate(pipeline);
+
+      // Get total number of distinct users who have published submissions
+      const totalAgg = await Submission.aggregate([
+        { $match: { status: SUBMISSION_STATUS.PUBLISHED } },
+        { $group: { _id: '$userId' } },
+        { $count: 'total' }
+      ]);
+
+      const total = (totalAgg[0] && totalAgg[0].total) || 0;
+
+      return {
+        users,
+        pagination: {
+          total,
+          limit: Number.parseInt(limit),
+          skip: Number.parseInt(skip),
+          hasNext: (Number.parseInt(skip) + Number.parseInt(limit)) < total,
+          hasPrev: Number.parseInt(skip) > 0
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching users with published submissions:', error);
+      throw new Error('Failed to fetch users with published submissions');
+    }
+  }
+
   static async markUserAsFeaturedByContent(userId) {
     try {
       const user = await User.findById(userId);
