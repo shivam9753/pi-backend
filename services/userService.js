@@ -556,12 +556,13 @@ class UserService {
         },
         { $unwind: '$user' },
 
-        // Project only required minimal fields: id, name, profileImage
+        // Project minimal fields: id, name, profileImage, published count
         {
           $project: {
             _id: '$user._id',
             name: { $ifNull: ['$user.name', '$user.username'] },
-            profileImage: '$user.profileImage'
+            profileImage: '$user.profileImage',
+            publishedSubmissions: '$publishedCount'
           }
         },
 
@@ -586,6 +587,7 @@ class UserService {
 
       return {
         users,
+        total,
         pagination: {
           total,
           limit: Number.parseInt(limit),
