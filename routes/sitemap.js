@@ -31,22 +31,20 @@ router.get('/sitemap.xml', async (req, res, next) => {
       return res.send(sitemapCache.xml);
     }
 
-    // Static important pages to include
+    // Static important pages to include and their metadata (influence search engines)
     const staticPaths = [
-      '/',
-      '/explore',
-      '/featured-poems',
-      '/about',
-      '/faqs',
-      '/contact-us',
-      '/privacy-policy',
-      '/terms-of-use',
-      '/prompts'
+      { path: '/', priority: '1.0', changefreq: 'daily' },
+      { path: '/explore', priority: '0.9', changefreq: 'daily' },
+      { path: '/featured-poems', priority: '0.8', changefreq: 'weekly' },
+      { path: '/published-authors', priority: '0.8', changefreq: 'weekly' },
+      { path: '/submission', priority: '0.7', changefreq: 'monthly' }
     ];
 
     const urls = staticPaths.map(p => ({
-      loc: `${SITE_HOST}${p}`,
-      lastmod: new Date().toISOString().split('T')[0]
+      loc: `${SITE_HOST}${p.path}`,
+      lastmod: new Date().toISOString().split('T')[0],
+      changefreq: p.changefreq,
+      priority: p.priority
     }));
 
     // Fetch published submissions (limit to 50k to stay within sitemap limits)
@@ -74,6 +72,8 @@ router.get('/sitemap.xml', async (req, res, next) => {
       xml += '  <url>\n';
       xml += `    <loc>${escapeXml(u.loc)}</loc>\n`;
       if (u.lastmod) xml += `    <lastmod>${escapeXml(u.lastmod)}</lastmod>\n`;
+      if (u.changefreq) xml += `    <changefreq>${escapeXml(u.changefreq)}</changefreq>\n`;
+      if (u.priority) xml += `    <priority>${escapeXml(u.priority)}</priority>\n`;
       xml += '  </url>\n';
     }
     xml += '</urlset>';
