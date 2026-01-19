@@ -145,6 +145,8 @@ router.get('/pending', requireWriter, validatePagination, async (req, res) => {
       status: sub.status,
       tags: sub.tags,
       submitterName: sub.user?.name || sub.user?.username || 'Unknown',
+      // Include author's ATS for admin UI
+      authorAts: (sub.user && typeof sub.user.ats === 'number') ? sub.user.ats : 50,
       isNewAuthor: !sub.publishedCount || sub.publishedCount.length === 0 || sub.publishedCount[0]?.count === 0,
       createdAt: sub.createdAt
     }));

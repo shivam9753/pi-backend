@@ -259,6 +259,33 @@ class SubmissionService {
     submission.reviewedBy = reviewData.reviewerId;
     await submission.save();
 
+    // Update author's ATS (Author Trust Score) for specific review outcomes
+    // This update happens in the same request as the review action and is defensive
+    try {
+      const authorId = submission.userId;
+      if (authorId) {
+        const author = await User.findById(authorId);
+        if (author) {
+          let delta = 0;
+
+          if (reviewData.status === SUBMISSION_STATUS.ACCEPTED) delta = 6;
+          else if (reviewData.status === SUBMISSION_STATUS.NEEDS_REVISION) delta = 1;
+          else if (reviewData.status === SUBMISSION_STATUS.REJECTED) delta = -4;
+
+          if (delta !== 0) {
+            const currentATS = (typeof author.ats === 'number') ? author.ats : 50;
+            let newATS = currentATS + delta;
+            newATS = Math.max(0, Math.min(100, newATS));
+            author.ats = newATS;
+            await author.save();
+          }
+        }
+      }
+    } catch (atsError) {
+      // Do not block the review flow if ATS update fails; log and continue
+      console.warn('Failed to update author ATS:', atsError);
+    }
+
     return { submission, review };
   }
 

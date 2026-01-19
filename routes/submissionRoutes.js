@@ -688,7 +688,7 @@ router.get('/', validatePagination, async (req, res) => {
     
     const submissions = await Submission.find(query)
       .select(selectFields)
-      .populate('userId', 'name username email profileImage')
+      .populate('userId', 'name username email profileImage ats')
       .populate('reviewedBy', 'username')
       .sort(sortOptions)
       .limit(parseInt(limit))
@@ -731,6 +731,7 @@ router.get('/', validatePagination, async (req, res) => {
         tags: sub.tags,
         slug: sub.seo?.slug,
         authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
+        authorAts: (sub.userId && typeof sub.userId.ats === 'number') ? sub.userId.ats : 50,
         author: {
           _id: sub.userId?._id || null,
           name: sub.userId?.name || sub.userId?.username || 'Unknown',
@@ -751,6 +752,7 @@ router.get('/', validatePagination, async (req, res) => {
         tags: sub.tags,
         status: sub.status,
         authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
+        authorAts: (sub.userId && typeof sub.userId.ats === 'number') ? sub.userId.ats : 50,
         author: {
           _id: sub.userId?._id || null,
           name: sub.userId?.name || sub.userId?.username || 'Unknown',
@@ -774,6 +776,7 @@ router.get('/', validatePagination, async (req, res) => {
         tags: sub.tags,
         status: sub.status,
         authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
+        authorAts: (sub.userId && typeof sub.userId.ats === 'number') ? sub.userId.ats : 50,
         author: {
           _id: sub.userId?._id || null,
           name: sub.userId?.name || sub.userId?.username || 'Unknown',

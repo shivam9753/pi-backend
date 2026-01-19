@@ -57,6 +57,13 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  ats: {
+    type: Number,
+    required: true,
+    default: 50,
+    min: 0,
+    max: 100
+  },
 }, {
   timestamps: true,
   versionKey: false,
