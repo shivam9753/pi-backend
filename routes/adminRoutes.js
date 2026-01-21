@@ -355,26 +355,44 @@ async function findUsageForKey(key) {
   const usages = [];
   try {
     // Check Content.images.s3Key (exact match)
-    const contents = await require('../models/Content').find({ 'images.s3Key': key }).select('_id submissionId title');
+    const Content = require('../models/Content');
+    const Submission = require('../models/Submission');
+    const User = require('../models/User');
+
+    const contents = await Content.find({ 'images.s3Key': key }).select('_id submissionId title');
     if (contents && contents.length) {
-      contents.forEach(c => usages.push({ type: 'content', id: c._id, info: { submissionId: c.submissionId } }));
+      // For each content, attempt to fetch submission slug and author
+      for (const c of contents) {
+        let submissionSlug = null;
+        let authorId = null;
+        try {
+          const sub = await Submission.findById(c.submissionId).select('seo.slug userId');
+          if (sub) {
+            submissionSlug = sub.seo && sub.seo.slug ? sub.seo.slug : null;
+            authorId = sub.userId || null;
+          }
+        } catch (e) {
+          // ignore
+        }
+        usages.push({ type: 'content', id: c._id, info: { title: c.title, submissionId: c.submissionId, submissionSlug, authorId } });
+      }
     }
 
     // Check Users by profileImage (contains key)
-    const users = await require('../models/User').find({ profileImage: { $regex: key } }).select('_id username');
+    const users = await User.find({ profileImage: { $regex: key } }).select('_id username');
     if (users && users.length) {
       users.forEach(u => usages.push({ type: 'user', id: u._id, info: { username: u.username } }));
     }
 
     // Check Submission.imageUrl and seo.ogImage (contains key)
-    const submissions = await require('../models/Submission').find({
+    const submissions = await Submission.find({
       $or: [
         { imageUrl: { $regex: key } },
         { 'seo.ogImage': { $regex: key } }
       ]
-    }).select('_id title');
+    }).select('_id title seo');
     if (submissions && submissions.length) {
-      submissions.forEach(s => usages.push({ type: 'submission', id: s._id, info: { title: s.title } }));
+      submissions.forEach(s => usages.push({ type: 'submission', id: s._id, info: { title: s.title, slug: s.seo && s.seo.slug ? s.seo.slug : null } }));
     }
 
   } catch (err) {
@@ -434,6 +452,35 @@ router.delete('/media', async (req, res) => {
     res.json({ success: true, message: 'Object deleted' });
   } catch (err) {
     console.error('Delete media error:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// POST /api/admin/media/bulk-delete - body: { keys: [string] }
+router.post('/media/bulk-delete', async (req, res) => {
+  try {
+    const { keys } = req.body;
+    if (!Array.isArray(keys) || keys.length === 0) {
+      return res.status(400).json({ success: false, message: 'keys array required' });
+    }
+
+    const results = [];
+    for (const key of keys) {
+      try {
+        const del = await S3MediaService.deleteObject(key);
+        if (del && del.success) {
+          results.push({ key, success: true });
+        } else {
+          results.push({ key, success: false, error: del && del.error ? del.error : 'delete failed' });
+        }
+      } catch (err) {
+        results.push({ key, success: false, error: err && err.message ? err.message : String(err) });
+      }
+    }
+
+    res.json({ success: true, results });
+  } catch (err) {
+    console.error('Bulk delete error', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
