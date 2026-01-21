@@ -131,7 +131,7 @@ class EmailService {
 
             <p>Your work will be published on PoemsIndia soon. We'll notify you once it goes live.</p>
 
-            <a href="https://app.poemsindia.in/my-submissions" class="button">View My Submissions</a>
+            <a href="https://poemsindia.in/my-submissions" class="button">View My Submissions</a>
 
             <p>Thank you for contributing to PoemsIndia!</p>
 
@@ -190,7 +190,7 @@ class EmailService {
 
             <p>We encourage you to continue writing and submitting your work. Every piece you create helps you grow as a writer.</p>
 
-            <a href="https://app.poemsindia.in/submit" class="button">Submit New Work</a>
+            <a href="https://poemsindia.in/submit" class="button">Submit New Work</a>
 
             <p>Thank you for your interest in PoemsIndia.</p>
 
@@ -249,7 +249,7 @@ class EmailService {
 
             <p>Please review the feedback above and resubmit your work after making the requested changes. We're looking forward to seeing the revised version!</p>
 
-            <a href="https://app.poemsindia.in/my-submissions" class="button">Edit & Resubmit</a>
+            <a href="https://poemsindia.in/my-submissions" class="button">Edit & Resubmit</a>
 
             <p>If you have any questions about the feedback, please don't hesitate to reach out.</p>
 
@@ -308,7 +308,7 @@ class EmailService {
               </div>
             ` : ''}
 
-            <a href="https://app.poemsindia.in/my-submissions" class="button">View My Submissions</a>
+            <a href="https://poemsindia.in/my-submissions" class="button">View My Submissions</a>
 
             <p>Thank you for your patience!</p>
 
