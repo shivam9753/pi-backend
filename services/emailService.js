@@ -6,10 +6,8 @@ const nodemailer = require('nodemailer');
  */
 
 class EmailService {
-  constructor() {
-    this.transporter = null;
-    this.initialized = false;
-  }
+  transporter = null;
+  initialized = false;
 
   /**
    * Initialize email transporter

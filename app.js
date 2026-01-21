@@ -130,6 +130,9 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Register the new sendEmailRoutes at /api/sendemail
+app.use('/api/sendemail', require('./routes/sendEmailRoutes'));
+
 // Apply API rate limiting to API routes
 app.use('/api', security.api);
 

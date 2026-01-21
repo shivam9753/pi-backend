@@ -7,6 +7,7 @@ const Submission = require('../models/Submission');
 const { authenticateUser } = require('../middleware/auth');
 const { ImageService } = require('../config/imageService');
 const S3MediaService = require('../services/s3MediaService');
+const emailService = require('../services/emailService');
 
 // Configure multer for profile image uploads
 const upload = multer({ 
@@ -354,45 +355,53 @@ router.post('/users/:id/upload-profile-image',
 async function findUsageForKey(key) {
   const usages = [];
   try {
-    // Check Content.images.s3Key (exact match)
     const Content = require('../models/Content');
     const Submission = require('../models/Submission');
     const User = require('../models/User');
 
-    const contents = await Content.find({ 'images.s3Key': key }).select('_id submissionId title');
-    if (contents && contents.length) {
-      // For each content, attempt to fetch submission slug and author
-      for (const c of contents) {
-        let submissionSlug = null;
-        let authorId = null;
-        try {
-          const sub = await Submission.findById(c.submissionId).select('seo.slug userId');
-          if (sub) {
-            submissionSlug = sub.seo && sub.seo.slug ? sub.seo.slug : null;
-            authorId = sub.userId || null;
-          }
-        } catch (e) {
-          // ignore
-        }
-        usages.push({ type: 'content', id: c._id, info: { title: c.title, submissionId: c.submissionId, submissionSlug, authorId } });
-      }
-    }
-
-    // Check Users by profileImage (contains key)
-    const users = await User.find({ profileImage: { $regex: key } }).select('_id username');
-    if (users && users.length) {
-      users.forEach(u => usages.push({ type: 'user', id: u._id, info: { username: u.username } }));
-    }
-
-    // Check Submission.imageUrl and seo.ogImage (contains key)
-    const submissions = await Submission.find({
+    // Run independent queries in parallel to reduce nesting and latency
+    const contentsPromise = Content.find({ 'images.s3Key': key }).select('_id submissionId title');
+    const usersPromise = User.find({ profileImage: { $regex: key } }).select('_id username');
+    const submissionsPromise = Submission.find({
       $or: [
         { imageUrl: { $regex: key } },
         { 'seo.ogImage': { $regex: key } }
       ]
     }).select('_id title seo');
+
+    const [contents, users, submissions] = await Promise.all([contentsPromise, usersPromise, submissionsPromise]);
+
+    // If content entries reference submissions, batch-fetch those submissions
+    if (contents && contents.length) {
+      const submissionIds = contents.map(c => c.submissionId).filter(Boolean);
+      let subsById = {};
+      if (submissionIds.length) {
+        const subs = await Submission.find({ _id: { $in: submissionIds } }).select('seo.slug userId');
+        subsById = subs.reduce((acc, s) => { acc[String(s._id)] = s; return acc; }, {});
+      }
+
+      for (const c of contents) {
+        const sub = subsById[String(c.submissionId)];
+        const submissionSlug = sub && sub.seo && sub.seo.slug ? sub.seo.slug : null;
+        const authorId = sub && sub.userId ? sub.userId : null;
+        usages.push({
+          type: 'content',
+          id: c._id,
+          info: { title: c.title, submissionId: c.submissionId, submissionSlug, authorId }
+        });
+      }
+    }
+
+    if (users && users.length) {
+      users.forEach(u => usages.push({ type: 'user', id: u._id, info: { username: u.username } }));
+    }
+
     if (submissions && submissions.length) {
-      submissions.forEach(s => usages.push({ type: 'submission', id: s._id, info: { title: s.title, slug: s.seo && s.seo.slug ? s.seo.slug : null } }));
+      submissions.forEach(s => usages.push({
+        type: 'submission',
+        id: s._id,
+        info: { title: s.title, slug: s.seo && s.seo.slug ? s.seo.slug : null }
+      }));
     }
 
   } catch (err) {

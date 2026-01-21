@@ -20,6 +20,125 @@ router.use(authenticateUser);
 
 // DEPRECATED: Use /api/submissions?status=pending_review instead
 // GET /api/reviews/pending - Get submissions pending review and in progress with advanced filtering
+/**
+ * Helper to build MongoDB match query from request params
+ */
+function buildPendingQuery({ status, type, dateFrom, dateTo, search }) {
+  const query = status ? { status } : { status: { $in: STATUS_ARRAYS.REVIEWABLE_STATUSES } };
+
+  if (type) query.submissionType = type;
+
+  if (dateFrom || dateTo) {
+    query.createdAt = {};
+    if (dateFrom) query.createdAt.$gte = new Date(dateFrom);
+    if (dateTo) query.createdAt.$lte = new Date(dateTo);
+  }
+
+  if (search) {
+    query.$or = [
+      { title: { $regex: search, $options: 'i' } },
+      { description: { $regex: search, $options: 'i' } }
+    ];
+  }
+
+  return query;
+}
+
+/**
+ * Helper to map wordLength to a readingTime filter
+ */
+function getReadingTimeFilter(wordLength) {
+  switch (wordLength) {
+    case 'quick':
+      return { readingTime: { $lte: 1 } }; // ~200 words
+    case 'medium':
+      return { readingTime: { $gt: 1, $lte: 3 } }; // 200-500 words
+    case 'long':
+      return { readingTime: { $gt: 3 } }; // >500 words
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build aggregation pipeline for pending submissions
+ */
+function buildPendingPipeline(query, authorType, wordLength, sortBy, order, skip, limit) {
+  const pipeline = [
+    { $match: query },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'user'
+      }
+    },
+    { $unwind: '$user' },
+    {
+      $lookup: {
+        from: 'submissions',
+        let: { userId: '$userId' },
+        pipeline: [
+          { $match: { $expr: { $and: [{ $eq: ['$userId', '$$userId'] }, { $eq: ['$status', 'published'] }] } } },
+          { $count: 'count' }
+        ],
+        as: 'publishedCount'
+      }
+    }
+  ];
+
+  if (authorType === 'new') {
+    pipeline.push({
+      $match: {
+        $or: [
+          { publishedCount: { $size: 0 } },
+          { 'publishedCount.0.count': { $eq: 0 } }
+        ]
+      }
+    });
+  } else if (authorType === 'returning') {
+    pipeline.push({
+      $match: {
+        'publishedCount.0.count': { $gt: 0 }
+      }
+    });
+  }
+
+  const readingTimeFilter = getReadingTimeFilter(wordLength);
+  if (readingTimeFilter) {
+    pipeline.push({ $match: readingTimeFilter });
+  }
+
+  pipeline.push(
+    { $sort: { [sortBy]: order === 'asc' ? 1 : -1 } },
+    { $skip: Number.parseInt(skip) },
+    { $limit: Number.parseInt(limit) }
+  );
+
+  return pipeline;
+}
+
+/**
+ * Simple mapper to return optimized submission shape
+ */
+function mapOptimizedSubmission(sub) {
+  return {
+    _id: sub._id,
+    title: sub.title,
+    excerpt: sub.excerpt,
+    imageUrl: sub.imageUrl,
+    readingTime: sub.readingTime,
+    submissionType: sub.submissionType,
+    status: sub.status,
+    tags: sub.tags,
+    submitterName: sub.user?.name || sub.user?.username || 'Unknown',
+    authorAts: (sub.user && typeof sub.user.ats === 'number') ? sub.user.ats : 50,
+    isNewAuthor: !sub.publishedCount || sub.publishedCount.length === 0 || sub.publishedCount[0]?.count === 0,
+    createdAt: sub.createdAt
+  };
+}
+
 router.get('/pending', requireWriter, validatePagination, async (req, res) => {
   try {
     const { 
@@ -35,129 +154,27 @@ router.get('/pending', requireWriter, validatePagination, async (req, res) => {
       authorType, // 'new' or 'returning'
       wordLength // 'quick' (<200), 'medium' (200-500), 'long' (>500)
     } = req.query;
-    
-    // Default to reviewable statuses, or filter by specific status
-    const query = status ? { status } : { status: { $in: STATUS_ARRAYS.REVIEWABLE_STATUSES } };
-    
-    // Content type filter
-    if (type) query.submissionType = type;
-    
-    // Date range filter
-    if (dateFrom || dateTo) {
-      query.createdAt = {};
-      if (dateFrom) query.createdAt.$gte = new Date(dateFrom);
-      if (dateTo) query.createdAt.$lte = new Date(dateTo);
-    }
-    
-    // Search filter (title, description, content)
-    if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
-      ];
-    }
-    
-    // Build the aggregation pipeline for complex filtering
-    const pipeline = [
-      { $match: query },
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'userId',
-          foreignField: '_id',
-          as: 'user'
-        }
-      },
-      { $unwind: '$user' },
-      {
-        $lookup: {
-          from: 'submissions',
-          let: { userId: '$userId' },
-          pipeline: [
-            { $match: { $expr: { $and: [{ $eq: ['$userId', '$$userId'] }, { $eq: ['$status', 'published'] }] } } },
-            { $count: 'count' }
-          ],
-          as: 'publishedCount'
-        }
-      }
-    ];
-    
-    // Add author type filter
-    if (authorType === 'new') {
-      pipeline.push({
-        $match: {
-          $or: [
-            { publishedCount: { $size: 0 } },
-            { 'publishedCount.0.count': { $eq: 0 } }
-          ]
-        }
-      });
-    } else if (authorType === 'returning') {
-      pipeline.push({
-        $match: {
-          'publishedCount.0.count': { $gt: 0 }
-        }
-      });
-    }
-    
-    // Add word length filter
-    if (wordLength) {
-      let readingTimeFilter = {};
-      switch (wordLength) {
-        case 'quick':
-          readingTimeFilter = { readingTime: { $lte: 1 } }; // ~200 words
-          break;
-        case 'medium':
-          readingTimeFilter = { readingTime: { $gt: 1, $lte: 3 } }; // 200-500 words
-          break;
-        case 'long':
-          readingTimeFilter = { readingTime: { $gt: 3 } }; // >500 words
-          break;
-      }
-      if (Object.keys(readingTimeFilter).length > 0) {
-        pipeline.push({ $match: readingTimeFilter });
-      }
-    }
-    
-    // Add sorting and pagination
-    pipeline.push(
-      { $sort: { [sortBy]: order === 'asc' ? 1 : -1 } },
-      { $skip: parseInt(skip) },
-      { $limit: parseInt(limit) }
-    );
-    
+
+    const query = buildPendingQuery({ status, type, dateFrom, dateTo, search });
+    const pipeline = buildPendingPipeline(query, authorType, wordLength, sortBy, order, skip, limit);
+
     const submissions = await Submission.aggregate(pipeline);
-    
-    // Get total count for pagination
-    const countPipeline = pipeline.slice(0, -3); // Remove sort, skip, limit
+
+    // Get total count for pagination (remove sort, skip, limit)
+    const countPipeline = pipeline.slice(0, -3);
     countPipeline.push({ $count: 'total' });
     const totalResult = await Submission.aggregate(countPipeline);
     const total = totalResult.length > 0 ? totalResult[0].total : 0;
-    
-    // Return optimized submission data
-    const optimizedSubmissions = submissions.map(sub => ({
-      _id: sub._id,
-      title: sub.title,
-      excerpt: sub.excerpt,
-      imageUrl: sub.imageUrl,
-      readingTime: sub.readingTime,
-      submissionType: sub.submissionType,
-      status: sub.status,
-      tags: sub.tags,
-      submitterName: sub.user?.name || sub.user?.username || 'Unknown',
-      // Include author's ATS for admin UI
-      authorAts: (sub.user && typeof sub.user.ats === 'number') ? sub.user.ats : 50,
-      isNewAuthor: !sub.publishedCount || sub.publishedCount.length === 0 || sub.publishedCount[0]?.count === 0,
-      createdAt: sub.createdAt
-    }));
-    
+
+    const optimizedSubmissions = submissions.map(mapOptimizedSubmission);
+
     res.json({
       pendingSubmissions: optimizedSubmissions,
       total,
       pagination: {
-        limit: parseInt(limit),
-        skip: parseInt(skip),
-        hasMore: (parseInt(skip) + parseInt(limit)) < total
+        limit: Number.parseInt(limit),
+        skip: Number.parseInt(skip),
+        hasMore: (Number.parseInt(skip) + Number.parseInt(limit)) < total
       }
     });
   } catch (error) {
@@ -333,7 +350,7 @@ router.post('/:id/revision', requireReviewer, validateObjectId('id'), async (req
 // POST /api/reviews/:id/shortlist - Shortlist submission
 router.post('/:id/shortlist', requireReviewer, validateObjectId('id'), async (req, res) => {
   try {
-    const { reviewNotes, reviewerId } = req.body;
+    const { reviewNotes } = req.body;
     
     const reviewData = {
       reviewerId: req.user._id,
@@ -374,85 +391,6 @@ router.get('/submission/:id', requireWriter, validateObjectId('id'), async (req,
     res.json({ review });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching submission review', error: error.message });
-  }
-});
-
-// POST /api/reviews/:id/send-email - Send custom email to submission author
-router.post('/:id/send-email', requireReviewer, validateObjectId('id'), async (req, res) => {
-  try {
-    const { subject, message, template } = req.body;
-
-    // Validate required fields
-    if (!subject || !subject.trim()) {
-      return res.status(400).json({ message: 'Email subject is required' });
-    }
-
-    if (!message || !message.trim()) {
-      return res.status(400).json({ message: 'Email message is required' });
-    }
-
-    // Get submission with author details
-    const submission = await Submission.findById(req.params.id).populate('userId', 'name username email');
-
-    if (!submission) {
-      return res.status(404).json({ message: 'Submission not found' });
-    }
-
-    if (!submission.userId || !submission.userId.email) {
-      return res.status(400).json({ message: 'Author email not found' });
-    }
-
-    const author = submission.userId;
-
-    // Use template if provided, otherwise send custom message
-    let emailResult;
-    if (template) {
-      // Use predefined template
-      switch (template) {
-        case 'approved':
-          emailResult = await emailService.sendSubmissionApproved(submission, author, message);
-          break;
-        case 'rejected':
-          emailResult = await emailService.sendSubmissionRejected(submission, author, message);
-          break;
-        case 'revision':
-          emailResult = await emailService.sendRevisionRequested(submission, author, message);
-          break;
-        case 'shortlisted':
-          emailResult = await emailService.sendSubmissionShortlisted(submission, author, message);
-          break;
-        default:
-          return res.status(400).json({ message: 'Invalid template. Use: approved, rejected, revision, or shortlisted' });
-      }
-    } else {
-      // Send plain text email
-      const plainText = `Dear ${author.name || author.username},
-
-${message}
-
-Best regards,
-The PoemsIndia Editorial Team`;
-
-      emailResult = await emailService.sendPlainTextEmail(author.email, subject, plainText);
-    }
-
-    if (emailResult.success) {
-      res.json({
-        success: true,
-        message: `Email sent successfully to ${author.email}`,
-        messageId: emailResult.messageId
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to send email',
-        error: emailResult.error || emailResult.reason
-      });
-    }
-
-  } catch (error) {
-    console.error('Error sending email:', error);
-    res.status(500).json({ message: 'Error sending email', error: error.message });
   }
 });
 
