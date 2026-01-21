@@ -389,6 +389,7 @@ router.get('/media/list', async (req, res) => {
     const prefix = req.query.prefix || '';
     const continuationToken = req.query.continuationToken || null;
     const maxKeys = req.query.maxKeys || 100;
+    const filter = req.query.filter || 'all'; // all | orphan | inuse
 
     const listResult = await S3MediaService.listObjects(prefix, continuationToken, maxKeys);
     if (!listResult.success) {
@@ -404,7 +405,15 @@ router.get('/media/list', async (req, res) => {
       return { key: obj.Key, size: obj.Size, lastModified: obj.LastModified, url: obj.Url, usedBy };
     }));
 
-    res.json({ success: true, objects: annotated, isTruncated: listResult.isTruncated, nextContinuationToken: listResult.nextContinuationToken });
+    // Apply server-side filter if requested
+    let filtered = annotated;
+    if (filter === 'orphan') {
+      filtered = annotated.filter(o => !o.usedBy || o.usedBy.length === 0);
+    } else if (filter === 'inuse') {
+      filtered = annotated.filter(o => o.usedBy && o.usedBy.length > 0);
+    }
+
+    res.json({ success: true, objects: filtered, isTruncated: listResult.isTruncated, nextContinuationToken: listResult.nextContinuationToken });
   } catch (err) {
     console.error('Media list error:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
