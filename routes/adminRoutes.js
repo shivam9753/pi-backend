@@ -460,6 +460,7 @@ router.delete('/media', async (req, res) => {
 router.post('/media/bulk-delete', async (req, res) => {
   try {
     const { keys } = req.body;
+    console.log('ADMIN bulk-delete request received. keys count:', Array.isArray(keys) ? keys.length : 'invalid', 'keys:', keys);
     if (!Array.isArray(keys) || keys.length === 0) {
       return res.status(400).json({ success: false, message: 'keys array required' });
     }
@@ -478,6 +479,7 @@ router.post('/media/bulk-delete', async (req, res) => {
       }
     }
 
+    console.log('ADMIN bulk-delete results:', results);
     res.json({ success: true, results });
   } catch (err) {
     console.error('Bulk delete error', err);
