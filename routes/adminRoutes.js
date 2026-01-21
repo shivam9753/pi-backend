@@ -6,6 +6,7 @@ const User = require('../models/User');
 const Submission = require('../models/Submission');
 const { authenticateUser } = require('../middleware/auth');
 const { ImageService } = require('../config/imageService');
+const S3MediaService = require('../services/s3MediaService');
 
 // Configure multer for profile image uploads
 const upload = multer({ 
@@ -348,5 +349,84 @@ router.post('/users/:id/upload-profile-image',
     }
   }
 );
+
+// Helper to detect DB references for a given S3 key
+async function findUsageForKey(key) {
+  const usages = [];
+  try {
+    // Check Content.images.s3Key (exact match)
+    const contents = await require('../models/Content').find({ 'images.s3Key': key }).select('_id submissionId title');
+    if (contents && contents.length) {
+      contents.forEach(c => usages.push({ type: 'content', id: c._id, info: { submissionId: c.submissionId } }));
+    }
+
+    // Check Users by profileImage (contains key)
+    const users = await require('../models/User').find({ profileImage: { $regex: key } }).select('_id username');
+    if (users && users.length) {
+      users.forEach(u => usages.push({ type: 'user', id: u._id, info: { username: u.username } }));
+    }
+
+    // Check Submission.imageUrl and seo.ogImage (contains key)
+    const submissions = await require('../models/Submission').find({
+      $or: [
+        { imageUrl: { $regex: key } },
+        { 'seo.ogImage': { $regex: key } }
+      ]
+    }).select('_id title');
+    if (submissions && submissions.length) {
+      submissions.forEach(s => usages.push({ type: 'submission', id: s._id, info: { title: s.title } }));
+    }
+
+  } catch (err) {
+    console.error('Error finding usage for key', key, err);
+  }
+  return usages;
+}
+
+// GET /api/admin/media/list
+router.get('/media/list', async (req, res) => {
+  try {
+    const prefix = req.query.prefix || '';
+    const continuationToken = req.query.continuationToken || null;
+    const maxKeys = req.query.maxKeys || 100;
+
+    const listResult = await S3MediaService.listObjects(prefix, continuationToken, maxKeys);
+    if (!listResult.success) {
+      return res.status(500).json({ success: false, message: 'Failed to list S3 objects', error: listResult.error });
+    }
+
+    // For each object, find DB usage (best-effort) but limit to first 50 objects to avoid heavy DB load
+    const objects = listResult.objects || [];
+    const limited = objects.slice(0, 50);
+
+    const annotated = await Promise.all(limited.map(async (obj) => {
+      const usedBy = await findUsageForKey(obj.Key);
+      return { key: obj.Key, size: obj.Size, lastModified: obj.LastModified, url: obj.Url, usedBy };
+    }));
+
+    res.json({ success: true, objects: annotated, isTruncated: listResult.isTruncated, nextContinuationToken: listResult.nextContinuationToken });
+  } catch (err) {
+    console.error('Media list error:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// DELETE /api/admin/media - body: { key }
+router.delete('/media', async (req, res) => {
+  try {
+    const { key } = req.body;
+    if (!key) return res.status(400).json({ success: false, message: 'S3 object key required' });
+
+    const deleteResult = await S3MediaService.deleteObject(key);
+    if (!deleteResult.success) {
+      return res.status(500).json({ success: false, message: 'Failed to delete S3 object', error: deleteResult.error });
+    }
+
+    res.json({ success: true, message: 'Object deleted' });
+  } catch (err) {
+    console.error('Delete media error:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
 
 module.exports = router;
