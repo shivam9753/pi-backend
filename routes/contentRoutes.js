@@ -239,7 +239,59 @@ router.get('/', validatePagination, async (req, res) => {
     pipeline.push({ $project: projection });
 
     const contents = await Content.aggregate(pipeline);
-    
+
+    // Normalize tags across list results: convert UUID tag ids or raw names into canonical objects {_id, name, slug}
+    try {
+      const makeSlug = (s) => {
+        if (!s) return '';
+        return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      };
+
+      // Collect all candidate tag ids (UUID-like strings) from contents
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const candidateIds = new Set();
+      contents.forEach(c => {
+        if (Array.isArray(c.tags)) {
+          c.tags.forEach(t => {
+            if (typeof t === 'string' && uuidRegex.test(t)) candidateIds.add(t);
+            else if (t && typeof t === 'object' && (t._id || t.id)) candidateIds.add(String(t._id || t.id));
+          });
+        }
+      });
+
+      let tagDocs = [];
+      if (candidateIds.size > 0) {
+        const Tag = require('../models/Tag');
+        try {
+          tagDocs = await Tag.find({ _id: { $in: Array.from(candidateIds) } }).select('_id name slug').lean();
+        } catch (err) {
+          console.warn('Failed to load Tag docs for content list:', err && (err.message || err));
+          tagDocs = [];
+        }
+      }
+
+      const tagMap = new Map(tagDocs.map(t => [String(t._id), { _id: String(t._id), name: t.name || '', slug: t.slug || makeSlug(t.name || t._id) }]));
+
+      // Replace tags on each content with canonical objects
+      for (const c of contents) {
+        if (!Array.isArray(c.tags)) { c.tags = []; continue; }
+        c.tags = c.tags.map(raw => {
+          if (!raw) return null;
+          if (typeof raw === 'object') {
+            const id = raw._id || raw.id || null;
+            const name = raw.name || raw.label || raw.tag || (id ? id : '');
+            if (id && tagMap.has(String(id))) return tagMap.get(String(id));
+            return { _id: id || null, name, slug: raw.slug || makeSlug(name || id) };
+          }
+          const rawStr = String(raw);
+          if (tagMap.has(rawStr)) return tagMap.get(rawStr);
+          return { _id: null, name: rawStr, slug: makeSlug(rawStr) };
+        }).filter(Boolean);
+      }
+    } catch (err) {
+      console.warn('Error normalizing tags for content list response:', err && (err.message || err));
+    }
+
     // Get total count for pagination
     const countPipeline = pipeline.slice(0, -3); // Remove skip, limit, project
     countPipeline.push({ $count: 'total' });
@@ -343,14 +395,53 @@ router.get('/id/:contentId', validateObjectId('contentId'), async (req, res) => 
 
     const content = results[0];
 
+    // Normalize tags into canonical objects {_id, name, slug}
+    try {
+      if (Array.isArray(content.tags) && content.tags.length > 0) {
+        const makeSlug = (s) => {
+          if (!s) return '';
+          return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        };
+
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const Tag = require('../models/Tag');
+        const tagIds = content.tags.filter(t => typeof t === 'string' && uuidRegex.test(t));
+
+        let tagDocs = [];
+        if (tagIds.length > 0) {
+          try {
+            tagDocs = await Tag.find({ _id: { $in: tagIds } }).select('_id name slug').lean();
+          } catch (err) {
+            console.warn('Failed to load Tag docs for content by id:', err && (err.message || err));
+            tagDocs = [];
+          }
+        }
+
+        const tagMap = new Map(tagDocs.map(t => [String(t._id), { _id: String(t._id), name: t.name || '', slug: t.slug || makeSlug(t.name || t._id) }]));
+
+        content.tags = content.tags.map(raw => {
+          if (!raw) return null;
+          if (typeof raw === 'object') {
+            const id = raw._id || raw.id || null;
+            const name = raw.name || raw.label || raw.tag || (id ? id : '');
+            return id && tagMap.has(String(id)) ? tagMap.get(String(id)) : { _id: id || null, name, slug: raw.slug || makeSlug(name || id) };
+          }
+          const rawStr = String(raw);
+          if (tagMap.has(rawStr)) return tagMap.get(rawStr);
+          return { _id: null, name: rawStr, slug: makeSlug(rawStr) };
+        }).filter(Boolean);
+      } else {
+        content.tags = [];
+      }
+    } catch (err) {
+      console.warn('Error normalizing tags for content by id:', err && (err.message || err));
+      content.tags = Array.isArray(content.tags) ? content.tags : [];
+    }
+
     // Get author's other featured content (limit to 5, excluding current content)
-    const authorFeaturedPipeline = [
-      { 
-        $match: { 
-          _id: { $ne: contentId },  // Exclude current content
-          isFeatured: true 
-        } 
-      },
+    const authorId = content.author._id;
+    const featuredPipeline = [
+      { $match: { 'author._id': authorId, isFeatured: true, _id: { $ne: contentId } } },
       {
         $lookup: {
           from: 'submissions',
@@ -360,32 +451,77 @@ router.get('/id/:contentId', validateObjectId('contentId'), async (req, res) => 
         }
       },
       { $unwind: '$submission' },
-      { 
-        $match: { 
-          'submission.status': 'published',
-          'submission.userId': content.author._id  // Same author
-        } 
-      },
-      { $sort: { featuredAt: -1 } },  // Most recently featured first
-      { $limit: 5 },
+      { $match: { 'submission.status': 'published' } },
       {
         $project: {
           _id: 1,
           title: 1,
-          viewCount: 1,
+          tags: 1,
+          footnotes: 1,
+          isFeatured: 1,
           featuredAt: 1,
+          viewCount: 1,
+          createdAt: 1,
+          publishedAt: '$submission.publishedAt',
           submissionType: '$submission.submissionType',
-          slug: '$submission.seo.slug'
+          seo: 1
         }
-      }
+      },
+      { $limit: 5 }
     ];
 
-    const authorFeaturedContent = await Content.aggregate(authorFeaturedPipeline);
+    const featuredContents = await Content.aggregate(featuredPipeline);
 
-    // Add featured content to response
-    content.authorFeaturedContent = authorFeaturedContent;
+    // Normalize tags for featured contents
+    for (const fc of featuredContents) {
+      if (Array.isArray(fc.tags) && fc.tags.length > 0) {
+        const makeSlug = (s) => {
+          if (!s) return '';
+          return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        };
 
-    res.json(content);
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const Tag = require('../models/Tag');
+        const tagIds = fc.tags.filter(t => typeof t === 'string' && uuidRegex.test(t));
+        const rawStrings = fc.tags.filter(t => typeof t === 'string' && !uuidRegex.test(t));
+
+        let tagDocs = [];
+        if (tagIds.length > 0) {
+          try {
+            tagDocs = await Tag.find({ _id: { $in: tagIds } }).select('_id name slug').lean();
+          } catch (err) {
+            console.warn('Failed to load Tag docs for featured content:', err);
+            tagDocs = [];
+          }
+        }
+
+        const tagMap = new Map(tagDocs.map(t => [String(t._id), { _id: String(t._id), name: t.name || '', slug: t.slug || makeSlug(t.name || t._id) }]));
+
+        // Build final tag objects in original order
+        const finalTags = fc.tags.map(raw => {
+          if (!raw) return null;
+          if (typeof raw === 'object') {
+            const id = raw._id || raw.id || null;
+            const name = raw.name || raw.label || raw.tag || (id ? id : '');
+            return id && tagMap.has(String(id)) ? tagMap.get(String(id)) : { _id: id || null, name, slug: raw.slug || makeSlug(name || id) };
+          }
+          // raw is string
+          const rawStr = String(raw);
+          if (tagMap.has(rawStr)) return tagMap.get(rawStr);
+          // treat as display name
+          return { _id: null, name: rawStr, slug: makeSlug(rawStr) };
+        }).filter(Boolean);
+
+        fc.tags = finalTags;
+      } else {
+        fc.tags = [];
+      }
+    }
+
+    res.json({
+      ...content,
+      featuredContents
+    });
 
   } catch (error) {
     console.error('Error fetching content by ID:', error);
@@ -457,30 +593,51 @@ router.get('/:slug', async (req, res) => {
       return res.status(404).json({ message: 'Published content not found' });
     }
 
-    // Helper function to convert UUID tags to readable names
-    const convertTagsToNames = (tags) => {
-      if (!Array.isArray(tags)) return [];
-      
-      // Map UUID tags to readable names
-      const tagMapping = {
-        'bc1f1725-d6f4-4686-8094-11c8bd39183f': 'psychology',
-        '325213e4-4607-42b2-9d5d-fd99e8228552': 'philosophy',
-        // Add more mappings as needed
-      };
-      
-      return tags.map(tag => {
-        // Check if tag is a UUID format and exists in mapping
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (uuidRegex.test(tag) && tagMapping[tag]) {
-          return tagMapping[tag];
-        }
-        // Return original tag if not a UUID or no mapping found
-        return tag;
-      });
+    const content = results[0];
+
+    // Convert tags into canonical objects { _id, name, slug }
+    const makeSlug = (s) => {
+      if (!s) return '';
+      return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
     };
 
-    const content = results[0];
-    content.tags = convertTagsToNames(content.tags);
+    if (Array.isArray(content.tags) && content.tags.length > 0) {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const Tag = require('../models/Tag');
+      const tagIds = content.tags.filter(t => typeof t === 'string' && uuidRegex.test(t));
+      const rawStrings = content.tags.filter(t => typeof t === 'string' && !uuidRegex.test(t));
+
+      let tagDocs = [];
+      if (tagIds.length > 0) {
+        try {
+          tagDocs = await Tag.find({ _id: { $in: tagIds } }).select('_id name slug').lean();
+        } catch (err) {
+          console.warn('Failed to load Tag docs for content by id:', err);
+          tagDocs = [];
+        }
+      }
+
+      const tagMap = new Map(tagDocs.map(t => [String(t._id), { _id: String(t._id), name: t.name || '', slug: t.slug || makeSlug(t.name || t._id) }]));
+
+      // Build final tag objects in original order
+      const finalTags = content.tags.map(raw => {
+        if (!raw) return null;
+        if (typeof raw === 'object') {
+          const id = raw._id || raw.id || null;
+          const name = raw.name || raw.label || raw.tag || (id ? id : '');
+          return id && tagMap.has(String(id)) ? tagMap.get(String(id)) : { _id: id || null, name, slug: raw.slug || makeSlug(name || id) };
+        }
+        // raw is string
+        const rawStr = String(raw);
+        if (tagMap.has(rawStr)) return tagMap.get(rawStr);
+        // treat as display name
+        return { _id: null, name: rawStr, slug: makeSlug(rawStr) };
+      }).filter(Boolean);
+
+      content.tags = finalTags;
+    } else {
+      content.tags = [];
+    }
 
     res.json({ content });
 

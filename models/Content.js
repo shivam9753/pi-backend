@@ -19,8 +19,9 @@ const contentSchema = new mongoose.Schema({
   },
   tags: [{
     type: String,
-    trim: true,
-    lowercase: true
+    ref: 'Tag',
+    index: true,
+    default: []
   }],
   footnotes: {
     type: String,
@@ -109,6 +110,12 @@ const contentSchema = new mongoose.Schema({
     metaDescription: {
       type: String,
       trim: true
+    },
+    // Primary keyword for this content piece (editor-provided)
+    keyword: {
+      type: String,
+      trim: true,
+      default: ''
     }
   }
   

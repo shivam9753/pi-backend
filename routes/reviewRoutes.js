@@ -131,7 +131,7 @@ function mapOptimizedSubmission(sub) {
     readingTime: sub.readingTime,
     submissionType: sub.submissionType,
     status: sub.status,
-    tags: sub.tags,
+    tags: [], // Submission-level tags removed; aggregate from content in detail endpoints
     submitterName: sub.user?.name || sub.user?.username || 'Unknown',
     authorAts: (sub.user && typeof sub.user.ats === 'number') ? sub.user.ats : 50,
     isNewAuthor: !sub.publishedCount || sub.publishedCount.length === 0 || sub.publishedCount[0]?.count === 0,

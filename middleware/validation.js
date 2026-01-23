@@ -70,6 +70,9 @@ const validateUserUpdate = [
 
 // Submission validation rules
 const validateSubmissionCreation = [
+  // Remove any top-level tags or per-content tags sent by clients
+  body('tags').optional().customSanitizer(() => undefined),
+  body('contents.*.tags').optional().customSanitizer(() => undefined),
   body('title')
     .trim()
     .notEmpty()
@@ -103,6 +106,9 @@ const validateSubmissionCreation = [
 ];
 
 const validateSubmissionUpdate = [
+  // Remove any tags in update payloads to enforce content-level canonical tags only
+  body('tags').optional().customSanitizer(() => undefined),
+  body('contents.*.tags').optional().customSanitizer(() => undefined),
   body('title')
     .optional()
     .trim()

@@ -137,6 +137,12 @@ const submissionSchema = new mongoose.Schema({
       trim: true,
       lowercase: true
     }],
+    // Primary focus keyword for submission (editor-provided)
+    primaryKeyword: {
+      type: String,
+      trim: true,
+      default: ''
+    },
     ogImage: {
       type: String,
       trim: true
@@ -490,70 +496,152 @@ submissionSchema.statics.generateSlug = function(title, authorName) {
 
 // Helper method to manually populate contentIds (reusable across methods)
 submissionSchema.statics.populateContentIds = async function(submission) {
-  if (!submission || !submission.contentIds || submission.contentIds.length === 0) {
-    return submission;
-  }
-  
-  // Use direct MongoDB query with string IDs
-  const contents = await this.db.collection('contents').find({
-    _id: { $in: submission.contentIds }
-  }).toArray();
-  
-  // Create a map for fast lookup
-  const contentMap = new Map(contents.map(content => [content._id, content]));
-  
-  // Sort contents to match the order in submission.contentIds
-  const sortedContents = submission.contentIds
-    .map(id => contentMap.get(id))
-    .filter(Boolean); // Remove any null/undefined entries
-  
-  // Convert to plain JavaScript objects to avoid Mongoose serialization issues
-  const plainContents = sortedContents.map(content => ({
-    _id: content._id,
-    title: content.title,
-    body: content.body,
-    type: content.type, // Include type for backward compatibility
-    tags: content.tags || [],
-    footnotes: content.footnotes || '',
-    seo: content.seo || {},
-    viewCount: content.viewCount || 0,
-    isFeatured: content.isFeatured || false,
-    createdAt: content.createdAt,
-    updatedAt: content.updatedAt
-  }));
-  
-  // Create a completely new object to avoid Mongoose interference
-  let submissionObj;
-  try {
-    submissionObj = submission.toObject ? submission.toObject() : { ...submission };
-    
-    // Ensure user data is properly handled
-    if (submissionObj.userId && submissionObj.userId._id) {
-      // User is populated, keep as is
-    } else if (submissionObj.userId) {
-      // User ID exists but not populated, that's fine
-    } else {
-      // No user ID at all
-      submissionObj.userId = null;
+    // If submission is missing, return as-is
+    if (!submission) {
+      return submission;
     }
-    
-  } catch (error) {
-    console.error('Error converting submission to object:', error);
-    // Fallback: create manual object
-    submissionObj = {
-      _id: submission._id,
-      title: submission.title,
-      userId: submission.userId,
-      status: submission.status,
-      seo: submission.seo,
-      createdAt: submission.createdAt,
-      updatedAt: submission.updatedAt
-    };
-  }
-  
-  submissionObj.contentIds = plainContents;
-  return submissionObj;
-};
+
+    // If contentIds are missing or empty, attempt a fallback: load Content docs by submissionId
+    if (!submission.contentIds || submission.contentIds.length === 0) {
+      try {
+        // Try direct string match first
+        let foundContents = await this.db.collection('contents').find({ submissionId: submission._id }).toArray();
+
+        // If none found, try common alternate field names and ObjectId match
+        if (!foundContents || foundContents.length === 0) {
+          const orClauses = [{ submissionId: submission._id }, { submission_id: submission._id }, { submission: submission._id }];
+
+          // If submission._id looks like an ObjectId, include that possibility
+          try {
+            if (typeof submission._id === 'string' && mongoose.Types.ObjectId.isValid(submission._id)) {
+              const objectId = mongoose.Types.ObjectId(submission._id);
+              orClauses.push({ submissionId: objectId }, { submission_id: objectId }, { submission: objectId });
+            }
+          } catch (e) {
+            // ignore invalid ObjectId conversion
+          }
+
+          foundContents = await this.db.collection('contents').find({ $or: orClauses }).toArray();
+        }
+
+        if (foundContents && foundContents.length > 0) {
+          // Replace contentIds with the found content _id values so downstream logic can reuse the same flow
+          submission.contentIds = foundContents.map(c => c._id);
+        } else {
+          // No content documents found for this submission — return as-is
+          return submission;
+        }
+      } catch (err) {
+        console.error('Error during fallback fetch of contents by submissionId:', err);
+        return submission;
+      }
+    }
+
+    // Use direct MongoDB query with string IDs
+    const contents = await this.db.collection('contents').find({
+      _id: { $in: submission.contentIds }
+    }).toArray();
+
+    // Create a map for fast lookup
+    const contentMap = new Map(contents.map(content => [content._id, content]));
+
+    // Sort contents to match the order in submission.contentIds
+    const sortedContents = submission.contentIds
+      .map(id => contentMap.get(id))
+      .filter(Boolean); // Remove any null/undefined entries
+
+    // Convert to plain JavaScript objects to avoid Mongoose serialization issues
+    const plainContents = sortedContents.map(content => ({
+      _id: content._id,
+      title: content.title,
+      body: content.body,
+      type: content.type, // Include type for backward compatibility
+      tags: content.tags || [],
+      footnotes: content.footnotes || '',
+      seo: content.seo || {},
+      viewCount: content.viewCount || 0,
+      isFeatured: content.isFeatured || false,
+      createdAt: content.createdAt,
+      updatedAt: content.updatedAt
+    }));
+
+    // Populate Tag documents for all tag IDs referenced by the contents (read-time, no writes to Submission)
+    try {
+      // Collect distinct tag IDs (handle tags stored as objects or strings)
+      const allTagIds = Array.from(new Set(plainContents.flatMap(c => Array.isArray(c.tags) ? c.tags : [])));
+      let tagDocs = [];
+      if (allTagIds.length > 0) {
+        tagDocs = await this.db.collection('tags')
+          .find({ _id: { $in: allTagIds } })
+          .project({ _id: 1, name: 1, slug: 1 })
+          .toArray();
+      }
+
+      const tagMap = new Map(tagDocs.map(t => [t._id, { _id: t._id, name: t.name, slug: t.slug }]));
+
+      // Replace content tag id arrays with populated tag objects (fall back to raw id if tag doc missing)
+      for (const c of plainContents) {
+        if (!Array.isArray(c.tags)) {
+          c.tags = [];
+          continue;
+        }
+        c.tags = c.tags.map(tagId => {
+          // tagId might already be an object (legacy); handle both
+          let id = null;
+          if (typeof tagId === 'string') {
+            id = tagId;
+          } else if (tagId && tagId._id) {
+            id = tagId._id;
+          }
+          if (!id) return null;
+          return tagMap.get(id) || { _id: id, name: id, slug: null };
+        }).filter(Boolean);
+      }
+
+      // Attach aggregated distinct tags to the submission object (read-only, do not persist)
+      const aggregatedTags = Array.from(new Map(tagDocs.map(t => [t._id, { _id: t._id, name: t.name, slug: t.slug }])).values());
+
+      // Create a completely new object to avoid Mongoose interference
+      let submissionObj;
+      try {
+        submissionObj = submission.toObject ? submission.toObject() : { ...submission };
+
+        // Ensure user data is properly handled
+        if (submissionObj.userId && submissionObj.userId._id) {
+          // User is populated, keep as is
+        } else if (submissionObj.userId) {
+          // User ID exists but not populated, that's fine
+        } else {
+          // No user ID at all
+          submissionObj.userId = null;
+        }
+
+      } catch (error) {
+        console.error('Error converting submission to object:', error);
+        // Fallback: create manual object
+        submissionObj = {
+          _id: submission._id,
+          title: submission.title,
+          userId: submission.userId,
+          status: submission.status,
+          seo: submission.seo,
+          createdAt: submission.createdAt,
+          updatedAt: submission.updatedAt
+        };
+      }
+
+      submissionObj.contentIds = plainContents;
+      submissionObj.tags = aggregatedTags; // Read-time aggregated tag objects
+      return submissionObj;
+    } catch (err) {
+      console.error('Error populating tags for submission contents:', err);
+      // Even on error, return submission object with plain contents (tag ids) so callers are functional
+      let submissionObj = submission.toObject ? submission.toObject() : { ...submission };
+      submissionObj.contentIds = plainContents;
+      submissionObj.tags = []; // empty fallback
+      return submissionObj;
+    }
+  };
 
 submissionSchema.statics.findBySlug = async function(slug) {
   try {
@@ -623,19 +711,24 @@ submissionSchema.statics.findTrending = function(limit = 10, windowDays = 7) {
 };
 
 submissionSchema.statics.findMostViewed = function(limit = 10, timeframe = 'all') {
-  let query = { status: 'published', viewCount: { $gt: 0 } };
-  
-  if (timeframe !== 'all') {
-    const days = timeframe === 'week' ? 7 : timeframe === 'month' ? 30 : 365;
-    const cutoffTime = new Date(Date.now() - (days * 24 * 60 * 60 * 1000));
-    query.createdAt = { $gte: cutoffTime };
-  }
-  
-  return this.find(query)
-    .populate('userId', 'name username email profileImage')
-    .populate('contentIds', 'title body type tags footnotes')
-    .sort({ viewCount: -1 })
-    .limit(limit);
+    let query = { status: 'published', viewCount: { $gt: 0 } };
+    
+    if (timeframe !== 'all') {
+      let days = 365;
+      if (timeframe === 'week') {
+        days = 7;
+      } else if (timeframe === 'month') {
+        days = 30;
+      }
+      const cutoffTime = new Date(Date.now() - (days * 24 * 60 * 60 * 1000));
+      query.createdAt = { $gte: cutoffTime };
+    }
+    
+    return this.find(query)
+      .populate('userId', 'name username email profileImage')
+      .populate('contentIds', 'title body type tags footnotes')
+      .sort({ viewCount: -1 })
+      .limit(limit);
 };
 
 

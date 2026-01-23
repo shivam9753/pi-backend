@@ -620,56 +620,52 @@ router.get('/', validatePagination, async (req, res) => {
     let submissionIdsFromTags = null;
     if (tag) {
       const Content = require('../models/Content');
-      
-      // Try searching in both Content collection and Submission collection
-      const contentsWithTag = await Content.find({ 
-        tags: { $in: [tag.toLowerCase()] },
-        isPublished: true 
-      }).select('submissionId tags').lean();
-      
-      // Also search in submissions that have tags in their content
-      const submissionsWithTag = await Submission.find({
-        status: 'published'
-      }).populate({
-        path: 'contentIds',
-        match: { tags: { $in: [tag.toLowerCase()] } }
-      }).lean();
-      
-      // Filter out submissions where no content matched the tag
-      const validSubmissionsWithTag = submissionsWithTag.filter(sub => 
-        sub.contentIds && sub.contentIds.length > 0
-      );
-      
-      // Combine IDs from both approaches
-      let contentSubmissionIds = contentsWithTag.map(content => content.submissionId).filter(id => id);
-      let populatedSubmissionIds = validSubmissionsWithTag.map(sub => sub._id);
-      
-      submissionIdsFromTags = [...new Set([...contentSubmissionIds, ...populatedSubmissionIds])];
-      
-      if (submissionIdsFromTags.length === 0) {
-        // No content found with this tag, return empty result early
-        return res.json({
-          submissions: [],
-          total: 0,
-          pagination: {
-            limit: parseInt(limit),
-            skip: parseInt(skip),
-            currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
-            totalPages: 0,
-            hasMore: false
-          }
-        });
+      const Tag = require('../models/Tag');
+
+      // Resolve provided tag to canonical Tag._id — only accept ID or slug. Do NOT accept free-form names.
+      let tagDoc = null;
+      try {
+        const isPossibleUuid = typeof tag === 'string' && (/^[0-9a-fA-F\-]{36}$/.test(tag) || /^[0-9a-fA-F]{24}$/.test(tag));
+
+        // If looks like an id (UUID or ObjectId), try findById first
+        if (isPossibleUuid) {
+          tagDoc = await Tag.findById(tag).lean();
+        }
+
+        // Then try slug exact match (case-insensitive by lowercasing input)
+        if (!tagDoc) {
+          tagDoc = await Tag.findOne({ slug: (typeof tag === 'string' ? tag.toLowerCase() : tag) }).lean();
+        }
+      } catch (err) {
+        console.warn('Error resolving tag to Tag doc (id/slug only):', err && (err.message || err));
       }
-      
+
+      // If tag not found, return empty result (do not fallback to name matching)
+      if (!tagDoc) {
+        return res.json({ submissions: [], total: 0, pagination: { limit: parseInt(limit), skip: parseInt(skip), currentPage: 1, totalPages: 0, hasMore: false } });
+      }
+
+      // Find contents that reference this Tag._id
+      const contentsWithTag = await Content.find({ tags: { $in: [tagDoc._id] } }).select('submissionId tags').lean();
+
+      const contentSubmissionIds = contentsWithTag.map(content => content.submissionId).filter(id => id);
+      submissionIdsFromTags = [...new Set(contentSubmissionIds)];
+
+      if (!submissionIdsFromTags || submissionIdsFromTags.length === 0) {
+        // No content found with this tag, return empty result early
+        return res.json({ submissions: [], total: 0, pagination: { limit: parseInt(limit), skip: parseInt(skip), currentPage: 1, totalPages: 0, hasMore: false } });
+      }
+
       query._id = { $in: submissionIdsFromTags };
     }
-    
+
     // Different field selection based on status
     let selectFields;
     if (status === 'published' || status === 'published_and_draft') {
-      selectFields = 'title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime tags userId seo status';
+      // Do NOT select submission-level tags - tags are derived from content at read-time
+      selectFields = 'title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime userId seo status';
     } else {
-      selectFields = 'title excerpt imageUrl readingTime submissionType tags userId reviewedBy createdAt reviewedAt status';
+      selectFields = 'title excerpt imageUrl readingTime submissionType userId reviewedBy createdAt reviewedAt status';
     }
     
     // Create a deterministic sort - handle null values properly and ensure consistent results
@@ -728,7 +724,7 @@ router.get('/', validatePagination, async (req, res) => {
         viewCount: sub.viewCount,
         likeCount: sub.likeCount,
         readingTime: sub.readingTime,
-        tags: sub.tags,
+        tags: [], // Submission-level tags are not stored; use detail endpoint to get aggregated tags
         slug: sub.seo?.slug,
         authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
         authorAts: (sub.userId && typeof sub.userId.ats === 'number') ? sub.userId.ats : 50,
@@ -749,7 +745,7 @@ router.get('/', validatePagination, async (req, res) => {
         excerpt: sub.excerpt,
         imageUrl: sub.imageUrl,
         readingTime: sub.readingTime,
-        tags: sub.tags,
+        tags: [],
         status: sub.status,
         authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
         authorAts: (sub.userId && typeof sub.userId.ats === 'number') ? sub.userId.ats : 50,
@@ -773,7 +769,7 @@ router.get('/', validatePagination, async (req, res) => {
         imageUrl: sub.imageUrl,
         readingTime: sub.readingTime,
         submissionType: sub.submissionType,
-        tags: sub.tags,
+        tags: [],
         status: sub.status,
         authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
         authorAts: (sub.userId && typeof sub.userId.ats === 'number') ? sub.userId.ats : 50,
@@ -1041,6 +1037,18 @@ router.get('/:id/review', authenticateUser, requireReviewer, validateObjectId('i
 // POST /api/submissions - Create new submission
 router.post('/', authenticateUser, validateSubmissionCreation, async (req, res) => {
   try {
+    // Remove any tag data sent by client at submission creation
+    if (req.body.tags) delete req.body.tags;
+    if (Array.isArray(req.body.contents)) {
+      req.body.contents = req.body.contents.map(c => ({
+        title: c.title,
+        body: c.body,
+        type: c.type,
+        footnotes: c.footnotes || '',
+        seo: c.seo || {}
+      }));
+    }
+
     // Use authenticated user's ID instead of authorId from request body
     const submissionData = {
       ...req.body,
@@ -1067,12 +1075,23 @@ router.post('/', authenticateUser, validateSubmissionCreation, async (req, res) 
 // PUT /api/submissions/:id/resubmit - User resubmit needs_revision submission
 router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSubmissionUpdate, async (req, res) => {
   try {
-    
+    // Strip tags from incoming content updates to prevent persisting tags on submission/content during resubmit
+    if (req.body.tags) delete req.body.tags;
+    if (req.body.contents && Array.isArray(req.body.contents)) {
+      req.body.contents = req.body.contents.map(c => ({
+        _id: c._id,
+        title: c.title,
+        body: c.body,
+        type: c.type,
+        footnotes: c.footnotes || ''
+      }));
+    }
+
     const submission = await Submission.findById(req.params.id);
     if (!submission) {
       return res.status(404).json({ message: 'Submission not found' });
     }
-    
+
     // Check if user owns this submission  
     if (submission.userId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Can only resubmit your own submissions' });
@@ -1133,7 +1152,6 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
     res.status(500).json({ message: 'Error resubmitting submission', error: error.message });
   }
 });
-
 
 // PATCH /api/submissions/:id/status - Update submission status
 router.patch('/:id/status', authenticateUser, requireWriter, validateObjectId('id'), validateStatusUpdate, async (req, res) => {
@@ -1639,10 +1657,13 @@ router.post('/drafts', authenticateUser, async (req, res) => {
       }
       
       const contentDocs = contents.map(content => ({
-        ...content,
-        userId: req.user._id,
+        title: content.title,
+        body: content.body,
         type: content.type || submissionType,
-        submissionId: draft._id
+        userId: req.user._id,
+        submissionId: draft._id,
+        footnotes: content.footnotes || '',
+        tags: [] // Do not persist client-provided tags here
       }));
       
       const createdContents = await Content.create(contentDocs);
@@ -1673,10 +1694,13 @@ router.post('/drafts', authenticateUser, async (req, res) => {
       
       // Create content items
       const contentDocs = contents.map(content => ({
-        ...content,
-        userId: req.user._id,
+        title: content.title,
+        body: content.body,
         type: content.type || submissionType,
-        submissionId: draft._id
+        userId: req.user._id,
+        submissionId: draft._id,
+        footnotes: content.footnotes || '',
+        tags: []
       }));
       
       const createdContents = await Content.create(contentDocs);
@@ -1842,13 +1866,13 @@ router.put('/:id', authenticateUser, validateObjectId('id'), validateSubmissionU
 
       // Create new content items FIRST (before deleting old ones)
       const contentDocs = contents.map(content => ({
-        userId: req.user._id,
-        submissionId: submission._id.toString(), // Add required submissionId
         title: content.title,
         body: content.body,
         type: content.type || submissionType,
-        tags: content.tags || [],
-        footnotes: content.footnotes || ''
+        userId: req.user._id,
+        submissionId: submission._id,
+        footnotes: content.footnotes || '',
+        tags: [] // prevent persisting client tags here
       }));
 
       // Create new content (this may fail, preserving old content)
@@ -1958,29 +1982,23 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
       }
       
       // Create new content items with proper _id handling
-      const newContentIds = [];
-      
-      for (const contentData of contents) {
-        const contentDoc = {
-          userId: req.user._id,
-          submissionId: submission._id.toString(),
-          title: contentData.title,
-          body: contentData.body,
-          type: contentData.type || submissionType,
-          tags: contentData.tags || [],
-          footnotes: contentData.footnotes || ''
-        };
-        
-        const newContent = await Content.create(contentDoc);
-        newContentIds.push(newContent._id);
-      }
-      
-      submission.contentIds = newContentIds;
-      
+      const contentDocs = contents.map(content => ({
+        title: content.title,
+        body: content.body,
+        type: content.type || submissionType,
+        userId: req.user._id,
+        submissionId: submission._id,
+        footnotes: content.footnotes || '',
+        tags: []
+      }));
+
+      const createdContents = await Content.create(contentDocs);
+      submission.contentIds = createdContents.map(c => c._id);
+
       // Recalculate reading time and excerpt
-      const createdContents = await Content.find({ _id: { $in: newContentIds } });
-      submission.readingTime = Submission.calculateReadingTime(createdContents);
-      submission.excerpt = Submission.generateExcerpt(createdContents);
+      const newContents = await Content.find({ _id: { $in: submission.contentIds } });
+      submission.readingTime = Submission.calculateReadingTime(newContents);
+      submission.excerpt = Submission.generateExcerpt(newContents);
     }
     
     // Automatically change status to 'resubmitted' - this is the semantic behavior

@@ -2,12 +2,15 @@ const Submission = require('../models/Submission');
 const Content = require('../models/Content');
 const Review = require('../models/Review');
 const User = require('../models/User');
+const mongoose = require('mongoose');
+const Tag = require('../models/Tag');
 const { 
   SUBMISSION_STATUS, 
   STATUS_ARRAYS,
   STATUS_UTILS 
 } = require('../constants/status.constants');
 const { mapTagArray } = require('../utils/tagMapping');
+const tagService = require('./tagService');
 
 class SubmissionService {
   static async createSubmission(submissionData) {
@@ -44,11 +47,17 @@ class SubmissionService {
     const savedSubmission = await submission.save();
 
     // Now create content items with submissionId
+    // Ensure we do NOT persist any tag data coming from the client at submission creation time.
+    // Tags will be created/associated only during content publish flows.
     const contentDocs = contents.map(content => ({
-      ...content,
-      userId: actualUserId,
+      title: content.title,
+      body: content.body,
       type: content.type || submissionType,
-      submissionId: savedSubmission._id
+      userId: actualUserId,
+      submissionId: savedSubmission._id,
+      footnotes: content.footnotes || '',
+      tags: [], // explicitly empty to avoid persisting client-sent tags
+      seo: content.seo || {}
     }));
 
     const createdContents = await Content.create(contentDocs);
@@ -92,7 +101,7 @@ class SubmissionService {
       readingTime: sub.readingTime,
       reviewedAt: sub.reviewedAt,
       submissionType: sub.submissionType,
-      tags: sub.tags,
+      // Note: Submission-level tags are no longer stored. To get tags, call getSubmissionWithContent or published details.
       submitterName: sub.userId?.name || sub.userId?.username || 'Unknown',
     }));
 
@@ -173,6 +182,9 @@ class SubmissionService {
       delete populatedSubmission.contentIds;
     }
 
+    // Ensure tag objects ( {_id, name, slug} ) are present everywhere
+    await SubmissionService._ensureTagObjects(populatedSubmission);
+
     return populatedSubmission;
   }
 
@@ -189,6 +201,9 @@ class SubmissionService {
 
     // Use the helper method to manually populate contentIds
     const populatedSubmission = await Submission.populateContentIds(submission);
+
+    // Ensure tag objects ( {_id, name, slug} ) are present
+    await SubmissionService._ensureTagObjects(populatedSubmission);
 
     return {
       _id: populatedSubmission._id,
@@ -520,7 +535,8 @@ class SubmissionService {
       reviewedAt: submission.reviewedAt,
       publishedWorkId: submission.status === 'published' ? submission._id : null,
       excerpt: submission.excerpt,
-      tags: submission.tags || [],
+      // Submission-level tags removed. Use getSubmissionWithContent or getBySlug to retrieve aggregated tags.
+      
       // Don't include content body - only metadata for cards
       reviewFeedback: submission.reviewNotes || '',
       revisionNotes: submission.revisionNotes || '', // Add revision notes for needs_revision status
@@ -560,6 +576,8 @@ class SubmissionService {
         metaTitle: seoData.metaTitle || submission.title,
         metaDescription: seoData.metaDescription || submission.excerpt,
         keywords: seoData.keywords || [],
+        // Primary submission-level SEO keyword (editor-provided or default to submission title)
+        primaryKeyword: (seoData && seoData.primaryKeyword) ? String(seoData.primaryKeyword).trim() : (submission.title || ''),
         ogImage: seoData.ogImage || submission.imageUrl,
         canonical: seoData.canonical,
       }
@@ -570,74 +588,333 @@ class SubmissionService {
       updateData.imageUrl = submission.imageUrl;
     }
 
+    // Before finalizing publish, create/associate Tags for all contents belonging to this submission.
+    // Collect tag names from each content (contents may have tags provided by the UI as perContentTags in seoData)
+    try {
+      const contents = await Content.find({ submissionId: id }).lean();
+      // Map of contentId -> array of readable tag names
+      const perContentTagNames = new Map();
+      const allNamesSet = new Set();
+
+      // If frontend provided per-content tags in seoData.perContentTags, use them (do NOT persist at this stage)
+      const providedPerContentTags = seoData && seoData.perContentTags ? seoData.perContentTags : null;
+
+      for (const c of contents) {
+        let names = [];
+        if (providedPerContentTags && providedPerContentTags[c._id]) {
+          // Use provided tags for this content (array of strings)
+          names = Array.isArray(providedPerContentTags[c._id]) ? providedPerContentTags[c._id].map(t => (typeof t === 'string' ? t.trim() : '')).filter(Boolean) : [];
+        } else if (Array.isArray(c.tags) && c.tags.length > 0) {
+          // c.tags may contain raw strings (from client) or tag UUIDs/objects. If they look like readable strings, clean them.
+          const stringTags = c.tags.filter(t => typeof t === 'string');
+          names = mapTagArray(stringTags);
+        }
+        perContentTagNames.set(c._id.toString(), names);
+        names.forEach(n => allNamesSet.add(n));
+      }
+
+      const allNames = Array.from(allNamesSet);
+      let tagDocs = [];
+      if (allNames.length > 0) {
+        // Create or find Tag docs only during publish
+        tagDocs = await tagService.findOrCreateMany(allNames);
+      }
+
+      // Build map from tag name -> tag id
+      const tagNameToId = new Map(tagDocs.map(t => [t.name, t._id]));
+
+      // Prepare bulk updates for contents to set tags to canonical Tag._id array
+      if (tagDocs.length > 0) {
+        const bulkOps = [];
+        for (const c of contents) {
+          const names = perContentTagNames.get(c._id.toString()) || [];
+          const tagIds = names.map(n => tagNameToId.get(n)).filter(Boolean);
+          bulkOps.push({
+            updateOne: {
+              filter: { _id: c._id },
+              update: { $set: { tags: tagIds } }
+            }
+          });
+        }
+        if (bulkOps.length > 0) {
+          await Content.bulkWrite(bulkOps);
+        }
+      }
+
+      // Persist per-content SEO keywords (editor-provided) — default to content title when missing
+      try {
+        const perContentKeywords = seoData && seoData.perContentKeywords ? seoData.perContentKeywords : null;
+        // New: per-content meta fields (metaTitle, metaDescription)
+        const perContentMeta = seoData && seoData.perContentMeta ? seoData.perContentMeta : null;
+        const seoBulkOps = [];
+        for (const c of contents) {
+          const keyFromFront = perContentKeywords && perContentKeywords[c._id.toString()] ? perContentKeywords[c._id.toString()] : null;
+          const keyword = (keyFromFront && String(keyFromFront).trim()) ? String(keyFromFront).trim() : ((c.seo && c.seo.keyword) ? c.seo.keyword : (c.title || ''));
+          // Determine per-content meta values, preferring editor input, then existing content.seo values, then sensible defaults
+          const metaFromFront = perContentMeta && perContentMeta[c._id.toString()] ? perContentMeta[c._id.toString()] : {};
+          const metaTitle = (metaFromFront && metaFromFront.metaTitle && String(metaFromFront.metaTitle).trim()) ? String(metaFromFront.metaTitle).trim() : ((c.seo && c.seo.metaTitle) ? c.seo.metaTitle : (c.title || ''));
+          const metaDescription = (metaFromFront && metaFromFront.metaDescription && String(metaFromFront.metaDescription).trim()) ? String(metaFromFront.metaDescription).trim() : ((c.seo && c.seo.metaDescription) ? c.seo.metaDescription : (c.title || ''));
+          seoBulkOps.push({
+            updateOne: {
+              filter: { _id: c._id },
+              update: { $set: { 'seo.keyword': keyword, 'seo.metaTitle': metaTitle, 'seo.metaDescription': metaDescription } }
+            }
+          });
+        }
+        if (seoBulkOps.length > 0) {
+          await Content.bulkWrite(seoBulkOps);
+        }
+      } catch (seoErr) {
+        console.warn('Failed to persist per-content SEO keywords during publish:', seoErr && seoErr.message ? seoErr.message : seoErr);
+      }
+
+    } catch (err) {
+      console.error('Error during tag association in publish flow:', err);
+      // Do not block publishing entirely for tag issues, continue with publish
+    }
+
     const updatedSubmission = await Submission.findByIdAndUpdate(id, updateData, { new: true });
-    return updatedSubmission;
+
+    // Return populated submission with content and aggregated tags
+    const populated = await Submission.findById(updatedSubmission._id)
+      .populate('userId', 'name username email profileImage');
+
+    return await Submission.populateContentIds(populated);
   }
 
   static async getBySlug(slug) {
+    // Use model helper to find published submission by slug and populate content/tags
     const submission = await Submission.findBySlug(slug);
     if (!submission) {
       throw new Error('Published submission not found');
     }
-    
-    // Debug content structure
-    if (submission.contentIds && submission.contentIds.length > 0) {
-      console.log('🔍 Service debug - First content keys:', Object.keys(submission.contentIds[0]));
-      console.log('🔍 Service debug - Title:', submission.contentIds[0].title);
-      console.log('🔍 Service debug - Body length:', submission.contentIds[0].body?.length || 0);
+
+    // Ensure we have a plain object we can safely mutate
+    let populated;
+    try {
+      populated = await Submission.populateContentIds(submission);
+    } catch (err) {
+      console.warn('populateContentIds failed in getBySlug:', err && (err.message || err));
+      populated = submission && submission.toObject ? submission.toObject() : { ...submission };
     }
 
-    // Helper function to convert UUID tags to readable names using centralized utility
-    const convertTagsToNames = (tags) => {
-      return mapTagArray(tags);
-    };
+    // If contentIds exists but contains ID values (not full content objects), try to load the actual content docs
+    try {
+      const hasContentObjects = Array.isArray(populated.contentIds) && populated.contentIds.length > 0 && typeof populated.contentIds[0] === 'object' && ('body' in populated.contentIds[0] || 'title' in populated.contentIds[0]);
 
-    // Clean and minimal response
-    return {
-      _id: submission._id,
-      title: submission.title,
-      description: submission.description,
-      submissionType: submission.submissionType,
-      authorName: submission.userId.name || submission.userId.username,
-      authorId: submission.userId._id,
-      publishedAt: submission.publishedAt || submission.reviewedAt || submission.createdAt,
-      readingTime: submission.readingTime,
-      imageUrl: submission.imageUrl,
-      excerpt: submission.excerpt,
-      contents: (submission.contentIds || []).map(content => ({
-        _id: content._id,
-        title: content.title,
-        body: content.body,
-        type: submission.submissionType, // Use submission type since content no longer has type
-        tags: convertTagsToNames(content.tags || []),
-        footnotes: content.footnotes || '',
-        seo: content.seo || {},
-        viewCount: content.viewCount || 0,
-        isFeatured: content.isFeatured || false,
-        createdAt: content.createdAt
-      })),
-      tags: convertTagsToNames(submission.tags || []),
-      viewCount: submission.viewCount || 0
-    };
+      if (!hasContentObjects) {
+        let foundContents = [];
+
+        // If there is a contentIds array (likely IDs), try to fetch those documents first
+        if (Array.isArray(populated.contentIds) && populated.contentIds.length > 0) {
+          try {
+            foundContents = await Content.find({ _id: { $in: populated.contentIds } }).lean();
+          } catch (e) {
+            // ignore and try other fallbacks
+            console.warn('Failed to find contents by _id list in getBySlug:', e && (e.message || e));
+          }
+        }
+
+        // If still nothing, try querying by submissionId with multiple type/field fallbacks
+        if (!foundContents || foundContents.length === 0) {
+          const orClauses = [
+            { submissionId: populated._id },
+            { submission_id: populated._id },
+            { submission: populated._id }
+          ];
+
+          // If submission._id looks like an ObjectId, include ObjectId variants
+          if (typeof populated._id === 'string' && mongoose.Types.ObjectId.isValid(populated._id)) {
+            try {
+              const oid = mongoose.Types.ObjectId(populated._id);
+              orClauses.push({ submissionId: oid }, { submission_id: oid }, { submission: oid });
+            } catch (convErr) {
+              // ignore conversion errors
+            }
+          }
+
+          try {
+            foundContents = await Content.find({ $or: orClauses }).lean();
+          } catch (e) {
+            console.warn('Fallback Content.find by submissionId failed in getBySlug:', e && (e.message || e));
+          }
+        }
+
+        if (foundContents && foundContents.length > 0) {
+          populated.contentIds = foundContents;
+        }
+      }
+    } catch (e) {
+      console.warn('Error while resolving contents in getBySlug fallback:', e && (e.message || e));
+    }
+
+    // Normalize shape for public reading interface: rename contentIds -> contents
+    if (populated.contentIds) {
+      populated.contents = populated.contentIds;
+      delete populated.contentIds;
+    }
+
+    // Populate tag documents for contents so frontend gets name & slug
+    try {
+      if (Array.isArray(populated.contents)) {
+        const allTagIds = new Set();
+        populated.contents.forEach(c => {
+          if (Array.isArray(c.tags)) c.tags.forEach(t => { if (t) allTagIds.add(String(t)); });
+        });
+
+        let tagDocs = [];
+        if (allTagIds.size > 0) {
+          const tagIds = Array.from(allTagIds);
+          try {
+            tagDocs = await Tag.find({ _id: { $in: tagIds } }).select('_id name slug').lean();
+          } catch (e) {
+            // non-fatal - we'll synthesize tag objects below
+            console.warn('Warning: failed to load Tag docs:', e && (e.message || e));
+          }
+        }
+
+        // Helper to create a safe slug when missing
+        const makeSlug = (s) => {
+          if (!s) return '';
+          return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]/g, '');
+        };
+
+        const tagMap = new Map(tagDocs.map(t => [String(t._id), { _id: String(t._id), name: t.name || '', slug: t.slug || makeSlug(t.name || t._id) }]));
+
+        // Replace each content's tags with a stable object: { _id|null, name, slug }
+        populated.contents = populated.contents.map(c => {
+          const mappedTags = Array.isArray(c.tags)
+            ? c.tags.map(raw => {
+                // If tag is an object (may already be a doc), prefer its _id
+                if (raw && typeof raw === 'object') {
+                  const id = raw._id ? String(raw._id) : (raw.id ? String(raw.id) : null);
+                  const name = raw.name || raw.label || raw.tag || (id ? id : '');
+                  if (id && tagMap.has(id)) return tagMap.get(id);
+                  return { _id: id || null, name, slug: raw.slug || makeSlug(name || id) };
+                }
+
+                // Otherwise treat raw as either an id string or a plain name
+                const rawStr = String(raw);
+                if (tagMap.has(rawStr)) return tagMap.get(rawStr);
+
+                // No Tag doc found - treat as display name and synthesize slug
+                return { _id: null, name: rawStr, slug: makeSlug(rawStr) };
+              }).filter(Boolean)
+            : [];
+
+          return { ...c, tags: mappedTags };
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to populate tag docs in getBySlug:', err && (err.message || err));
+    }
+
+    // Ensure content tags are objects with name and slug for frontend
+    // (This normalization is idempotent given the mapping above)
+    if (Array.isArray(populated.contents)) {
+      populated.contents = populated.contents.map(c => {
+        const tagObjs = Array.isArray(c.tags)
+          ? c.tags.map(t => ({ _id: t && t._id ? t._id : null, name: t && t.name ? t.name : (t && t.slug ? t.slug.replace(/-/g, ' ') : ''), slug: t && t.slug ? t.slug : (t && t.name ? String(t.name).trim().toLowerCase().replace(/\s+/g, '-') : '') })).filter(Boolean)
+          : [];
+        return {
+          ...c,
+          tags: tagObjs
+        };
+      });
+    }
+
+    // Also expose top-level submission.tags as array of tag objects ({ _id, name, slug }) so frontend doesn't need to resolve names
+    if (Array.isArray(populated.tags)) {
+      const makeSlug = (s) => {
+        if (!s) return '';
+        return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]/g, '');
+      };
+
+      populated.tags = populated.tags.map(t => {
+        if (!t) return null;
+        if (typeof t === 'string') {
+          return { _id: null, name: t, slug: makeSlug(t) };
+        }
+        if (typeof t === 'object') {
+          const name = t.name || t.tag || t.label || '';
+          const id = t._id || t.id || null;
+          return { _id: id, name: name || (id ? id : ''), slug: t.slug || makeSlug(name || id) };
+        }
+        return null;
+      }).filter(Boolean);
+    }
+
+    return populated;
   }
-  
 
-  static async updateSEO(id, seoData) {
-    const submission = await Submission.findById(id);
-    if (!submission) {
-      throw new Error('Submission not found');
-    }
+  // Helper: ensure tags on submission and contents are objects with _id, name, slug
+  static async _ensureTagObjects(populatedSubmission) {
+    if (!populatedSubmission) return;
 
-    // If slug is being changed, ensure it's unique
-    if (seoData.slug && seoData.slug !== submission.seo?.slug) {
-      const existingSlug = await Submission.findOne({ 'seo.slug': seoData.slug, _id: { $ne: id } });
-      if (existingSlug) {
-        throw new Error('Slug already exists');
+    const makeSlug = (s) => {
+      if (!s) return '';
+      return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    };
+
+    // Normalize contents array
+    const contents = Array.isArray(populatedSubmission.contents) ? populatedSubmission.contents : (Array.isArray(populatedSubmission.contentIds) ? populatedSubmission.contentIds : []);
+
+    // Collect candidate tag ids (strings) to resolve from Tag collection
+    const candidateIds = new Set();
+    contents.forEach(c => {
+      if (Array.isArray(c.tags)) {
+        c.tags.forEach(t => {
+          if (!t) return;
+          if (typeof t === 'string') candidateIds.add(String(t));
+          else if (t && typeof t === 'object' && (t._id || t.id)) candidateIds.add(String(t._id || t.id));
+        });
+      }
+    });
+
+    let tagDocs = [];
+    if (candidateIds.size > 0) {
+      try {
+        tagDocs = await Tag.find({ _id: { $in: Array.from(candidateIds) } }).select('_id name slug').lean();
+      } catch (err) {
+        console.warn('Failed to resolve Tag docs in _ensureTagObjects:', err && (err.message || err));
+        tagDocs = [];
       }
     }
 
-    const updateData = { seo: { ...submission.seo, ...seoData } };
-    return await Submission.findByIdAndUpdate(id, updateData, { new: true });
+    const tagMap = new Map(tagDocs.map(t => [String(t._id), { _id: String(t._id), name: t.name || '', slug: t.slug || makeSlug(t.name || t._id) }]));
+
+    // Replace each content's tags with stable objects
+    populatedSubmission.contents = contents.map(c => {
+      const mapped = Array.isArray(c.tags) ? c.tags.map(raw => {
+        if (!raw) return null;
+        if (typeof raw === 'object') {
+          const id = raw._id ? String(raw._id) : (raw.id ? String(raw.id) : null);
+          const name = raw.name || raw.label || raw.tag || (id ? id : '');
+          if (id && tagMap.has(id)) return tagMap.get(id);
+          return { _id: id || null, name, slug: raw.slug || makeSlug(name || id) };
+        }
+        // raw is string
+        const rawStr = String(raw);
+        if (tagMap.has(rawStr)) return tagMap.get(rawStr);
+        return { _id: null, name: rawStr, slug: makeSlug(rawStr) };
+      }).filter(Boolean) : [];
+
+      return { ...c, tags: mapped };
+    });
+
+    // Normalize top-level submission.tags to objects
+    if (Array.isArray(populatedSubmission.tags)) {
+      populatedSubmission.tags = populatedSubmission.tags.map(t => {
+        if (!t) return null;
+        if (typeof t === 'string') return { _id: null, name: t, slug: makeSlug(t) };
+        if (typeof t === 'object') {
+          const id = t._id || t.id || null;
+          const name = t.name || t.tag || t.label || (id ? id : '');
+          return { _id: id, name, slug: t.slug || makeSlug(name || id) };
+        }
+        return null;
+      }).filter(Boolean);
+    }
   }
 }
 
