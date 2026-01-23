@@ -612,6 +612,7 @@ class SubmissionService {
       const perContentProvidedTagIds = new Map();
       const allNamesSet = new Set();
       const providedPerContentTags = seoData && seoData.perContentTags ? seoData.perContentTags : null;
+      console.log('publishWithSEO: received perContentTags:', providedPerContentTags);
 
       for (const c of contents) {
         const cid = String(c._id);
@@ -634,12 +635,17 @@ class SubmissionService {
             const isHex24 = /^[0-9a-fA-F]{24}$/.test(s);
             const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(s);
             if (isHex24 || isUuid) ids.push(s);
-            else names.push(s);
+            else {
+              // Normalize incoming tag name to match Tag normalization
+              const normalized = tagService && typeof tagService.normalizeName === 'function' ? tagService.normalizeName(s) : s;
+              if (normalized) names.push(normalized);
+            }
           }
           if (ids.length > 0) perContentProvidedTagIds.set(cid, ids);
         } else if (Array.isArray(c.tags) && c.tags.length > 0) {
           const stringTags = c.tags.filter(t => typeof t === 'string');
-          names = mapTagArray(stringTags);
+          // Normalize existing stored string tags as well
+          names = mapTagArray(stringTags).map(n => (tagService && typeof tagService.normalizeName === 'function') ? tagService.normalizeName(n) : n).filter(Boolean);
         }
 
         perContentTagNames.set(cid, names);
@@ -647,6 +653,7 @@ class SubmissionService {
       }
 
       const allNames = Array.from(allNamesSet);
+      console.log('publishWithSEO: all tag names collected for creation:', allNames);
 
       // Resolve Tag documents directly here so we can include tag creation in the transaction.
       const TagModel = mongoose.model('Tag');
@@ -659,13 +666,23 @@ class SubmissionService {
         const missing = allNames.filter(n => !tagNameToId.has(n));
         if (missing.length > 0) {
           try {
-            const created = await TagModel.insertMany(missing.map(name => ({ name })), { session, ordered: false });
+            // Normalize names and generate slugs before inserting to satisfy Tag schema
+            const docsToInsert = missing.map(name => {
+              const normalized = tagService && typeof tagService.normalizeName === 'function' ? tagService.normalizeName(name) : String(name).trim();
+              const slug = tagService && typeof tagService.generateSlug === 'function' ? tagService.generateSlug(normalized) : String(normalized).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]/g, '');
+              return { name: normalized, slug };
+            });
+
+            console.log('publishWithSEO: inserting missing tags:', docsToInsert.map(d=>d.name));
+            const created = await TagModel.insertMany(docsToInsert, { session, ordered: false });
             created.forEach(t => tagNameToId.set(t.name, String(t._id)));
+            console.log('publishWithSEO: created tags map size after insert:', tagNameToId.size);
           } catch (err) {
             // handle duplicate key race by reconciling
             if (err && (err.code === 11000 || (err.writeErrors && err.writeErrors.some(e => e.code === 11000)))) {
               const reconciled = await TagModel.find({ name: { $in: allNames } }).session(session);
               reconciled.forEach(t => tagNameToId.set(t.name, String(t._id)));
+              console.log('publishWithSEO: reconciled tags after duplicate-key error:', reconciled.map(r=>r.name));
             } else {
               throw err;
             }
@@ -711,6 +728,7 @@ class SubmissionService {
 
        if (contentBulkOps.length > 0) {
          await Content.bulkWrite(contentBulkOps, { session });
+         console.log('publishWithSEO: content tags bulkWrite executed for submission', id, 'ops:', contentBulkOps.length);
        }
 
       // Persist per-content SEO (primaryKeyword, metaTitle, metaDescription)
