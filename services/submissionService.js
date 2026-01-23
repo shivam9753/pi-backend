@@ -548,139 +548,210 @@ class SubmissionService {
 
   // SEO-related methods
   static async publishWithSEO(id, seoData, publisherId) {
-    const submission = await Submission.findById(id).populate('userId', 'username');
-    if (!submission) {
-      throw new Error('Submission not found');
-    }
-
-    // Generate slug if not provided
-    if (!seoData.slug) {
-      seoData.slug = Submission.generateSlug(submission.title, submission.userId.username);
-    }
-
-    // Ensure slug is unique (exclude current submission)
-    let uniqueSlug = seoData.slug;
-    let counter = 1;
-    while (await Submission.findOne({ 'seo.slug': uniqueSlug, _id: { $ne: id } })) {
-      uniqueSlug = `${seoData.slug}-${counter}`;
-      counter++;
-    }
-
-    // Update submission with SEO data and publish
-    const updateData = {
-      status: 'published',
-      reviewedAt: new Date(),
-      reviewedBy: publisherId,
-      seo: {
-        slug: uniqueSlug,
-        metaTitle: seoData.metaTitle || submission.title,
-        metaDescription: seoData.metaDescription || submission.excerpt,
-        keywords: seoData.keywords || [],
-        // Primary submission-level SEO keyword (editor-provided or default to submission title)
-        primaryKeyword: (seoData && seoData.primaryKeyword) ? String(seoData.primaryKeyword).trim() : (submission.title || ''),
-        ogImage: seoData.ogImage || submission.imageUrl,
-        canonical: seoData.canonical,
-      }
-    };
-
-    // Preserve existing imageUrl if it exists
-    if (submission.imageUrl) {
-      updateData.imageUrl = submission.imageUrl;
-    }
-
-    // Before finalizing publish, create/associate Tags for all contents belonging to this submission.
-    // Collect tag names from each content (contents may have tags provided by the UI as perContentTags in seoData)
+    // Wrap the publish flow in a transaction to ensure atomic updates
+    const session = await mongoose.startSession();
     try {
-      const contents = await Content.find({ submissionId: id }).lean();
-      // Map of contentId -> array of readable tag names
-      const perContentTagNames = new Map();
-      const allNamesSet = new Set();
+      session.startTransaction();
 
-      // If frontend provided per-content tags in seoData.perContentTags, use them (do NOT persist at this stage)
+      // Reload submission in transaction
+      const submission = await Submission.findById(id).populate('userId', 'username').session(session);
+      if (!submission) throw new Error('Submission not found');
+
+      // Accept either a nested submissionMeta object or legacy flat seoData fields.
+      const submissionMeta = seoData && seoData.submissionMeta && typeof seoData.submissionMeta === 'object'
+        ? { ...seoData.submissionMeta }
+        : { ...(seoData || {}) };
+
+      // Backwards compatibility: allow top-level primaryKeyword to be honored
+      if (!submissionMeta.primaryKeyword && seoData && seoData.primaryKeyword) {
+        submissionMeta.primaryKeyword = String(seoData.primaryKeyword).trim();
+      }
+
+      // Remove unsupported flags
+      if ('featuredPost' in submissionMeta) delete submissionMeta.featuredPost;
+
+      // Generate slug if not provided
+      if (!submissionMeta.slug) {
+        submissionMeta.slug = Submission.generateSlug(submission.title, submission.userId.username);
+      }
+
+      // Ensure slug is unique (exclude current submission)
+      let uniqueSlug = submissionMeta.slug;
+      let counter = 1;
+      while (await Submission.findOne({ 'seo.slug': uniqueSlug, _id: { $ne: id } }).session(session)) {
+        uniqueSlug = `${submissionMeta.slug}-${counter}`;
+        counter++;
+      }
+
+      // Build the update data including title/description/excerpt persistence
+      const updateData = {
+        title: seoData && seoData.title !== undefined ? seoData.title : submission.title,
+        description: seoData && seoData.description !== undefined ? seoData.description : submission.description,
+        excerpt: seoData && seoData.excerpt !== undefined ? seoData.excerpt : submission.excerpt,
+        status: 'published',
+        reviewedAt: new Date(),
+        reviewedBy: publisherId,
+        seo: {
+          slug: uniqueSlug,
+          metaTitle: submissionMeta.metaTitle || submission.title,
+          metaDescription: submissionMeta.metaDescription || submission.excerpt,
+          // Primary submission-level SEO keyword (editor-provided or default to submission title)
+          primaryKeyword: (submissionMeta && submissionMeta.primaryKeyword) ? String(submissionMeta.primaryKeyword).trim() : (submission.title || ''),
+          ogImage: submissionMeta.ogImage || submission.imageUrl,
+          canonical: submissionMeta.canonical
+        }
+      };
+
+      if (submission.imageUrl) updateData.imageUrl = submission.imageUrl;
+
+      // Fetch contents in transaction
+      const contents = await Content.find({ submissionId: id }).session(session);
+
+      // Build per-content tag names and collect provided tag ids from UI if any
+      const perContentTagNames = new Map();
+      const perContentProvidedTagIds = new Map();
+      const allNamesSet = new Set();
       const providedPerContentTags = seoData && seoData.perContentTags ? seoData.perContentTags : null;
 
       for (const c of contents) {
+        const cid = String(c._id);
         let names = [];
-        if (providedPerContentTags && providedPerContentTags[c._id]) {
-          // Use provided tags for this content (array of strings)
-          names = Array.isArray(providedPerContentTags[c._id]) ? providedPerContentTags[c._id].map(t => (typeof t === 'string' ? t.trim() : '')).filter(Boolean) : [];
+        const provided = providedPerContentTags && providedPerContentTags[cid] ? providedPerContentTags[cid] : null;
+
+        if (provided && Array.isArray(provided)) {
+          // Separate provided ids and names. Accept existing tag ids (UUID or 24 hex) or names
+          const ids = [];
+          for (const item of provided) {
+            if (!item) continue;
+            // Support object form { _id } or { id }
+            if (typeof item === 'object' && (item._id || item.id)) {
+              const idVal = String(item._id || item.id).trim();
+              if (idVal) ids.push(idVal);
+              continue;
+            }
+
+            const s = String(item).trim();
+            const isHex24 = /^[0-9a-fA-F]{24}$/.test(s);
+            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(s);
+            if (isHex24 || isUuid) ids.push(s);
+            else names.push(s);
+          }
+          if (ids.length > 0) perContentProvidedTagIds.set(cid, ids);
         } else if (Array.isArray(c.tags) && c.tags.length > 0) {
-          // c.tags may contain raw strings (from client) or tag UUIDs/objects. If they look like readable strings, clean them.
           const stringTags = c.tags.filter(t => typeof t === 'string');
           names = mapTagArray(stringTags);
         }
-        perContentTagNames.set(c._id.toString(), names);
+
+        perContentTagNames.set(cid, names);
         names.forEach(n => allNamesSet.add(n));
       }
 
       const allNames = Array.from(allNamesSet);
-      let tagDocs = [];
+
+      // Resolve Tag documents directly here so we can include tag creation in the transaction.
+      const TagModel = mongoose.model('Tag');
+      const tagNameToId = new Map();
+
       if (allNames.length > 0) {
-        // Create or find Tag docs only during publish
-        tagDocs = await tagService.findOrCreateMany(allNames);
-      }
+        const existing = await TagModel.find({ name: { $in: allNames } }).session(session);
+        existing.forEach(t => tagNameToId.set(t.name, String(t._id)));
 
-      // Build map from tag name -> tag id
-      const tagNameToId = new Map(tagDocs.map(t => [t.name, t._id]));
-
-      // Prepare bulk updates for contents to set tags to canonical Tag._id array
-      if (tagDocs.length > 0) {
-        const bulkOps = [];
-        for (const c of contents) {
-          const names = perContentTagNames.get(c._id.toString()) || [];
-          const tagIds = names.map(n => tagNameToId.get(n)).filter(Boolean);
-          bulkOps.push({
-            updateOne: {
-              filter: { _id: c._id },
-              update: { $set: { tags: tagIds } }
+        const missing = allNames.filter(n => !tagNameToId.has(n));
+        if (missing.length > 0) {
+          try {
+            const created = await TagModel.insertMany(missing.map(name => ({ name })), { session, ordered: false });
+            created.forEach(t => tagNameToId.set(t.name, String(t._id)));
+          } catch (err) {
+            // handle duplicate key race by reconciling
+            if (err && (err.code === 11000 || (err.writeErrors && err.writeErrors.some(e => e.code === 11000)))) {
+              const reconciled = await TagModel.find({ name: { $in: allNames } }).session(session);
+              reconciled.forEach(t => tagNameToId.set(t.name, String(t._id)));
+            } else {
+              throw err;
             }
-          });
-        }
-        if (bulkOps.length > 0) {
-          await Content.bulkWrite(bulkOps);
+          }
         }
       }
 
-      // Persist per-content SEO keywords (editor-provided) — default to content title when missing
-      try {
-        const perContentKeywords = seoData && seoData.perContentKeywords ? seoData.perContentKeywords : null;
-        // New: per-content meta fields (metaTitle, metaDescription)
-        const perContentMeta = seoData && seoData.perContentMeta ? seoData.perContentMeta : null;
-        const seoBulkOps = [];
-        for (const c of contents) {
-          const keyFromFront = perContentKeywords && perContentKeywords[c._id.toString()] ? perContentKeywords[c._id.toString()] : null;
-          const keyword = (keyFromFront && String(keyFromFront).trim()) ? String(keyFromFront).trim() : ((c.seo && c.seo.keyword) ? c.seo.keyword : (c.title || ''));
-          // Determine per-content meta values, preferring editor input, then existing content.seo values, then sensible defaults
-          const metaFromFront = perContentMeta && perContentMeta[c._id.toString()] ? perContentMeta[c._id.toString()] : {};
-          const metaTitle = (metaFromFront && metaFromFront.metaTitle && String(metaFromFront.metaTitle).trim()) ? String(metaFromFront.metaTitle).trim() : ((c.seo && c.seo.metaTitle) ? c.seo.metaTitle : (c.title || ''));
-          const metaDescription = (metaFromFront && metaFromFront.metaDescription && String(metaFromFront.metaDescription).trim()) ? String(metaFromFront.metaDescription).trim() : ((c.seo && c.seo.metaDescription) ? c.seo.metaDescription : (c.title || ''));
-          seoBulkOps.push({
-            updateOne: {
-              filter: { _id: c._id },
-              update: { $set: { 'seo.keyword': keyword, 'seo.metaTitle': metaTitle, 'seo.metaDescription': metaDescription } }
-            }
-          });
-        }
-        if (seoBulkOps.length > 0) {
-          await Content.bulkWrite(seoBulkOps);
-        }
-      } catch (seoErr) {
-        console.warn('Failed to persist per-content SEO keywords during publish:', seoErr && seoErr.message ? seoErr.message : seoErr);
+      // Build Content bulk ops using both provided tag ids and created/found tag ids
+      const contentBulkOps = [];
+      // Helper: return an id string when input is valid (ObjectId, UUID, or non-empty string), otherwise null
+      const toHexIdSafe = (v) => {
+        if (!v && v !== 0) return null;
+        if (v instanceof mongoose.Types.ObjectId) return String(v);
+        const s = String(v).trim();
+        if (s.length === 0) return null;
+        return s;
+      };
+       for (const c of contents) {
+         const cid = String(c._id);
+         const names = perContentTagNames.get(cid) || [];
+         const nameIds = names.map(n => tagNameToId.get(n)).filter(Boolean);
+         const providedIds = perContentProvidedTagIds.get(cid) || [];
+
+         // Normalize to id string safely
+         const combinedSet = new Set();
+         for (const pid of providedIds) {
+           const hex = toHexIdSafe(pid);
+           if (hex) combinedSet.add(hex);
+         }
+         for (const nid of nameIds) {
+           const hex = toHexIdSafe(nid);
+           if (hex) combinedSet.add(hex);
+         }
+         const combined = Array.from(combinedSet); // array of id strings (UUIDs or hex)
+
+         contentBulkOps.push({
+           updateOne: {
+             filter: { _id: c._id },
+             update: { $set: { tags: combined } }
+           }
+         });
+       }
+
+       if (contentBulkOps.length > 0) {
+         await Content.bulkWrite(contentBulkOps, { session });
+       }
+
+      // Persist per-content SEO (primaryKeyword, metaTitle, metaDescription)
+      const perContentMeta = seoData && seoData.perContentMeta ? seoData.perContentMeta : null;
+      const seoBulkOps = [];
+      for (const c of contents) {
+        const cid = String(c._id);
+        const metaFromFront = perContentMeta && perContentMeta[cid] ? perContentMeta[cid] : {};
+        const keywordCandidate = metaFromFront && metaFromFront.primaryKeyword ? metaFromFront.primaryKeyword : null;
+        const keyword = (keywordCandidate && String(keywordCandidate).trim()) ? String(keywordCandidate).trim() : ((c.seo && c.seo.keyword) ? c.seo.keyword : (c.title || ''));
+        const metaTitle = (metaFromFront && metaFromFront.metaTitle && String(metaFromFront.metaTitle).trim()) ? String(metaFromFront.metaTitle).trim() : ((c.seo && c.seo.metaTitle) ? c.seo.metaTitle : (c.title || ''));
+        const metaDescription = (metaFromFront && metaFromFront.metaDescription && String(metaFromFront.metaDescription).trim()) ? String(metaFromFront.metaDescription).trim() : ((c.seo && c.seo.metaDescription) ? c.seo.metaDescription : (c.title || ''));
+
+        seoBulkOps.push({
+          updateOne: {
+            filter: { _id: c._id },
+            update: { $set: { 'seo.keyword': keyword, 'seo.metaTitle': metaTitle, 'seo.metaDescription': metaDescription } }
+          }
+        });
       }
 
+      if (seoBulkOps.length > 0) {
+        await Content.bulkWrite(seoBulkOps, { session });
+      }
+
+      // Update submission within transaction
+      const updatedSubmission = await Submission.findByIdAndUpdate(id, updateData, { new: true, session });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      const populated = await Submission.findById(updatedSubmission._id)
+        .populate('userId', 'name username email profileImage');
+
+      return await Submission.populateContentIds(populated);
     } catch (err) {
-      console.error('Error during tag association in publish flow:', err);
-      // Do not block publishing entirely for tag issues, continue with publish
+      try { await session.abortTransaction(); } catch (e) { /* noop */ }
+      session.endSession();
+      throw err;
     }
-
-    const updatedSubmission = await Submission.findByIdAndUpdate(id, updateData, { new: true });
-
-    // Return populated submission with content and aggregated tags
-    const populated = await Submission.findById(updatedSubmission._id)
-      .populate('userId', 'name username email profileImage');
-
-    return await Submission.populateContentIds(populated);
-  }
+   }
 
   static async getBySlug(slug) {
     // Use model helper to find published submission by slug and populate content/tags
