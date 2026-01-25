@@ -1135,4 +1135,53 @@ router.get('/by-slug/:slug', async (req, res) => {
   }
 });
 
+// GET /api/submissions/random - Return random published submissions (public)
+router.get('/random', async (req, res) => {
+  try {
+    const { limit = 5, type } = req.query;
+    const limitNum = Math.min(Number.parseInt(limit, 10) || 5, 50); // cap at 50
+
+    const match = { status: 'published' };
+    if (type && typeof type === 'string') match.submissionType = type;
+
+    const pipeline = [
+      { $match: match },
+      { $sample: { size: limitNum } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
+      { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          excerpt: 1,
+          submissionType: 1,
+          imageUrl: 1,
+          readingTime: 1,
+          slug: '$seo.slug',
+          publishedAt: '$reviewedAt',
+          author: {
+            _id: '$author._id',
+            name: '$author.name',
+            username: '$author.username',
+            profileImage: '$author.profileImage'
+          }
+        }
+      }
+    ];
+
+    const submissions = await Submission.aggregate(pipeline);
+    return res.json({ success: true, submissions });
+  } catch (error) {
+    console.error('Error fetching random submissions:', error);
+    return res.status(500).json({ success: false, message: 'Error fetching random submissions', error: error.message });
+  }
+});
+
 module.exports = router;
