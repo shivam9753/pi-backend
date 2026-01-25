@@ -231,22 +231,6 @@ router.get('/review-queue', authenticateUser, requireReviewer, validatePaginatio
     
     const total = countResult.length > 0 ? countResult[0].total : 0;
     
-    // Debug logging
-    console.log('🔍 Debug Pagination:');
-    console.log('- Submissions returned:', submissions.length);
-    console.log('- Count result:', countResult);
-    console.log('- Total calculated:', total);
-    console.log('- Original query:', JSON.stringify(query));
-    console.log('- Applied filters: urgent=', urgent, 'newAuthor=', newAuthor, 'quickRead=', quickRead);
-    
-    // Debug: Test simple count without aggregation
-    const simpleCount = await Submission.countDocuments(query);
-    console.log('- Simple countDocuments:', simpleCount);
-    
-    // Debug: Show count pipeline structure
-    console.log('- Count pipeline length:', countPipeline.length);
-    console.log('- Count pipeline:', JSON.stringify(countPipeline, null, 2));
-
     res.json({
       success: true,
       submissions,
@@ -598,7 +582,6 @@ router.get('/', validatePagination, async (req, res) => {
       }).select('_id').lean();
       
       const matchingUserIds = matchingUsers.map(user => user._id);
-      console.log(`🔍 Search term: "${search}", found ${matchingUsers.length} matching users:`, matchingUserIds);
       
       // Build search query that includes title, description, excerpt, and user matches
       const searchConditions = [
@@ -613,7 +596,6 @@ router.get('/', validatePagination, async (req, res) => {
       }
       
       query.$or = searchConditions;
-      console.log('🔍 Final search query:', JSON.stringify(query, null, 2));
     }
     
     // Tag filtering - need to find submissions through content collection
@@ -919,7 +901,7 @@ router.get('/trending', validatePagination, async (req, res) => {
     const skipNum = parseInt(skip) || 0;
     const windowDaysNum = parseInt(windowDays) || 7;
 
-    // Get more submissions than needed to handle filtering + pagination
+    // Let Submission.findTrending aggregate DailyView buckets (windowDays param honored)
     const fetchLimit = limitNum + skipNum + 20; // Extra buffer for filtering
     let trendingSubmissions = await Submission.findTrending(fetchLimit, windowDaysNum);
 
@@ -966,6 +948,45 @@ router.get('/trending', validatePagination, async (req, res) => {
   } catch (error) {
     console.error('Error fetching trending submissions:', error);
     res.status(500).json({ message: 'Error fetching trending submissions', error: error.message });
+  }
+});
+
+// POST /api/submissions/:id/view - Increment submission view count (rolling window)
+router.post('/:id/view', validateObjectId('id'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    // windowDays is deprecated for per-doc rolling logic; keep param for backward compatibility
+    const windowDays = req.body && req.body.windowDays ? Number.parseInt(req.body.windowDays, 10) : 7;
+
+    const Submission = require('../models/Submission');
+    const DailyView = require('../models/DailyView');
+
+    const submission = await Submission.findById(id);
+    if (!submission) {
+      return res.status(404).json({ message: 'Submission not found' });
+    }
+
+    // Increment lifetime viewCount on submission (atomic)
+    await Submission.updateOne({ _id: id }, { $inc: { viewCount: 1 } });
+
+    // Upsert daily bucket
+    const dateKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    await DailyView.updateOne(
+      { targetType: 'submission', targetId: id, date: dateKey },
+      { $inc: { count: 1 }, $set: { updatedAt: new Date() } },
+      { upsert: true }
+    );
+
+    // Return updated lifetime viewCount (read fresh)
+    const updated = await Submission.findById(id).select('viewCount');
+
+    res.json({
+      success: true,
+      viewCount: updated ? updated.viewCount : submission.viewCount
+    });
+  } catch (error) {
+    console.error('Error incrementing submission view count:', error);
+    res.status(500).json({ message: 'Error updating view count', error: error.message });
   }
 });
 
@@ -1171,8 +1192,6 @@ router.patch('/:id/status', authenticateUser, requireWriter, validateObjectId('i
 
     // If submission is being rejected and has an image, clean it up from S3
     if (req.body.status === 'rejected' && submissionBefore.imageUrl) {
-      console.log('🗑️ Submission rejected, cleaning up S3 image:', submissionBefore.imageUrl);
-      
       // Extract S3 key from URL for deletion
       let s3Key = null;
       if (submissionBefore.imageUrl.includes('amazonaws.com')) {
@@ -1183,12 +1202,10 @@ router.patch('/:id/status', authenticateUser, requireWriter, validateObjectId('i
 
       // Delete from S3 if we have the key
       if (s3Key) {
-        console.log('🔧 DEBUG: Attempting to delete S3 object:', s3Key);
         try {
           const deleteResult = await ImageService.deleteImage(s3Key);
           
           if (deleteResult.success) {
-            console.log('✅ Successfully deleted orphaned image from S3');
           } else {
             console.error('❌ Failed to delete from S3:', deleteResult.error);
           }
@@ -1242,10 +1259,6 @@ router.post('/:id/upload-image', authenticateUser, requireReviewer, validateObje
       return res.status(400).json({ message: 'No image file provided' });
     }
 
-    console.log('🔧 DEBUG: Upload route called with file:', req.file.originalname);
-    console.log('🔧 DEBUG: File size:', req.file.size, 'bytes');
-    console.log('🔧 DEBUG: Using ImageService for upload...');
-
     // Use ImageService to handle storage (S3 or local)
     const uploadResult = await ImageService.uploadImage(
       req.file.buffer, 
@@ -1254,14 +1267,11 @@ router.post('/:id/upload-image', authenticateUser, requireReviewer, validateObje
     );
 
     if (!uploadResult.success) {
-      console.log('🔧 DEBUG: Image upload failed:', uploadResult.error);
       return res.status(500).json({ 
         message: 'Image upload failed', 
         error: uploadResult.error 
       });
     }
-
-    console.log('🔧 DEBUG: Image uploaded successfully to:', uploadResult.url);
 
     const submission = await Submission.findByIdAndUpdate(
       req.params.id,
@@ -1297,8 +1307,6 @@ router.delete('/:id/image', authenticateUser, requireReviewer, validateObjectId(
       return res.status(404).json({ message: 'No image found for this submission' });
     }
 
-    console.log('🔧 DEBUG: Deleting submission image:', submission.imageUrl);
-
     // Extract S3 key from URL for deletion
     let s3Key = null;
     if (submission.imageUrl.includes('amazonaws.com')) {
@@ -1311,7 +1319,6 @@ router.delete('/:id/image', authenticateUser, requireReviewer, validateObjectId(
 
     // Delete from S3 if we have the key
     if (s3Key) {
-      console.log('🔧 DEBUG: Attempting to delete S3 object:', s3Key);
       const deleteResult = await ImageService.deleteImage(s3Key);
       
       if (!deleteResult.success) {
@@ -1354,8 +1361,6 @@ router.delete('/:id', authenticateUser, requireAdmin, validateObjectId('id'), as
     
     // Clean up S3 images if submission had any
     if (submissionToDelete && submissionToDelete.imageUrl) {
-      console.log('🗑️ Submission deleted, cleaning up S3 image:', submissionToDelete.imageUrl);
-      
       // Extract S3 key from URL for deletion
       let s3Key = null;
       if (submissionToDelete.imageUrl.includes('amazonaws.com')) {
@@ -1366,12 +1371,10 @@ router.delete('/:id', authenticateUser, requireAdmin, validateObjectId('id'), as
 
       // Delete from S3 if we have the key
       if (s3Key) {
-        console.log('🔧 DEBUG: Attempting to delete S3 object:', s3Key);
         try {
           const deleteResult = await ImageService.deleteImage(s3Key);
           
           if (deleteResult.success) {
-            console.log('✅ Successfully deleted orphaned image from S3');
           } else {
             console.error('❌ Failed to delete from S3:', deleteResult.error);
           }

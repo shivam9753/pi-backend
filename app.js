@@ -63,8 +63,17 @@ const analyticsRoutes = require('./routes/analyticsRoutes');
 // const poetryAnalysis = require('./routes/poetry-analysis'); // DEPRECATED - moved to submissionRoutes
 
 // Import security middleware
-const security = require('./middleware/security');
+const { createSecurityMiddleware } = require('./middleware/security');
 
+// Instantiate security middleware functions once (factory returns concrete middlewares)
+const securityMiddleware = createSecurityMiddleware();
+// Fallback to legacy named exports if the factory isn't available
+const apiLimiter = securityMiddleware.api || require('./middleware/security').api;
+const authLimiter = securityMiddleware.auth || require('./middleware/security').auth;
+const uploadLimiter = securityMiddleware.upload || require('./middleware/security').upload;
+const helmetMiddleware = securityMiddleware.helmet || require('./middleware/security').helmet;
+const compressionMiddleware = securityMiddleware.compression || require('./middleware/security').compression;
+const requestLogger = securityMiddleware.logger || require('./middleware/security').logger;
 
 const app = express();
 
@@ -134,13 +143,25 @@ app.get('/health', (req, res) => {
 app.use('/api/sendemail', require('./routes/sendEmailRoutes'));
 
 // Apply API rate limiting to API routes
-app.use('/api', security.api);
+if (typeof apiLimiter === 'function') {
+  app.use('/api', apiLimiter);
+} else {
+  console.warn('Warning: apiLimiter is not a function, skipping API rate limiter');
+}
 
 // Apply auth rate limiting to auth routes
-app.use('/api/auth', security.auth);
+if (typeof authLimiter === 'function') {
+  app.use('/api/auth', authLimiter);
+} else {
+  console.warn('Warning: authLimiter is not a function, skipping auth rate limiter');
+}
 
 // Apply upload rate limiting to image routes
-app.use('/api/images', security.upload);
+if (typeof uploadLimiter === 'function') {
+  app.use('/api/images', uploadLimiter);
+} else {
+  console.warn('Warning: uploadLimiter is not a function, skipping upload rate limiter');
+}
 
 // API Routes
 app.use('/api/auth', authRoutes);

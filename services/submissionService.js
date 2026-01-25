@@ -796,16 +796,39 @@ class SubmissionService {
 
         // If there is a contentIds array (likely IDs), try to fetch those documents first
         if (Array.isArray(populated.contentIds) && populated.contentIds.length > 0) {
+          const contentIdStrings = populated.contentIds.map(id => String(id));
           try {
-            foundContents = await Content.find({ _id: { $in: populated.contentIds } }).lean();
+            // Prefer a direct collection query to avoid Mongoose type casting issues
+            foundContents = await Submission.db.collection('contents').find({ _id: { $in: contentIdStrings } }).toArray();
           } catch (e) {
-            // ignore and try other fallbacks
-            console.warn('Failed to find contents by _id list in getBySlug:', e && (e.message || e));
+            console.warn('Direct collection fetch by _id list failed in getBySlug, falling back to mongoose find:', e && (e.message || e));
+            try {
+              // Try a mongoose find that includes both string ids and ObjectId conversions when applicable
+              const queries = [];
+              queries.push({ _id: { $in: contentIdStrings } });
+               const objectIds = contentIdStrings.filter(id => mongoose.Types.ObjectId.isValid(id)).map(id => mongoose.Types.ObjectId(id));
+               if (objectIds.length > 0) {
+                 queries.push({ _id: { $in: objectIds } });
+               }
+               foundContents = await Content.find({ $or: queries }).lean();
+            } catch (e2) {
+              console.warn('Fallback mongoose find by mixed IDs failed in getBySlug:', e2 && (e2.message || e));
+            }
+          }
+
+          // Ensure we preserve the order of contentIds as provided on the submission
+          if (foundContents && foundContents.length > 0) {
+            const byId = new Map(foundContents.map(c => [String(c._id), c]));
+            foundContents = contentIdStrings.map(id => byId.get(String(id))).filter(Boolean);
           }
         }
 
-        // If still nothing, try querying by submissionId with multiple type/field fallbacks
-        if (!foundContents || foundContents.length === 0) {
+        // IMPORTANT: Do NOT fall back to querying all contents by submissionId when a submission
+        // explicitly provides a contentIds array. Querying by submissionId returns any content
+        // referencing that submission and can include items not present in submission.contentIds.
+        // Only use the submissionId-based fallback when no explicit contentIds are present.
+        if ((!foundContents || foundContents.length === 0) && (!Array.isArray(populated.contentIds) || populated.contentIds.length === 0)) {
+          // If still nothing, try querying by submissionId with multiple type/field fallbacks
           const orClauses = [
             { submissionId: populated._id },
             { submission_id: populated._id },

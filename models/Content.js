@@ -73,19 +73,9 @@ const contentSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
-  recentViews: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  windowStartTime: {
-    type: Date,
-    default: function() {
-      const date = new Date();
-      date.setDate(date.getDate() - 7);
-      return date;
-    }
-  },
+  // Deprecated: per-document rolling-window fields removed. Use DailyView collection for recent/period counts.
+  // recentViews: { type: Number, default: 0, min: 0 },
+  // windowStartTime: { type: Date, default: function() { const date = new Date(); date.setDate(date.getDate() - 7); return date; } },
   submissionId: {
     type: String,
     ref: 'Submission',
@@ -329,34 +319,8 @@ contentSchema.methods.checkPublishStatus = async function() {
   };
 };
 
-// Rolling window view tracking method (same as Submission)
-contentSchema.methods.logView = async function(windowDays = 7) {
-  const now = new Date();
-  const windowMs = windowDays * 24 * 60 * 60 * 1000;
-  // Use existing windowStartTime if present, otherwise treat as epoch 0
-  const windowStart = this.windowStartTime ? new Date(this.windowStartTime) : new Date(0);
-
-  // If the current window has expired, reset recentViews and start new window at "now"
-  if (now - windowStart > windowMs) {
-    this.recentViews = 1;
-    this.windowStartTime = now;
-  } else {
-    // Otherwise increment the current window counter
-    this.recentViews = (this.recentViews || 0) + 1;
-  }
-
-  // Always increment total views
-  this.viewCount = (this.viewCount || 0) + 1;
-
-  // Save using validateBeforeSave:false to avoid schema validation issues with legacy records
-  return await this.save({ validateBeforeSave: false });
-};
-
-// Get trending score (recent vs total views ratio)
-contentSchema.methods.getTrendingScore = function() {
-  if (!this.viewCount || this.viewCount === 0) return 0;
-  return Math.round(((this.recentViews || 0) / this.viewCount) * 100);
-};
+// NOTE: Rolling-window view tracking logic has been moved to server-side DailyView buckets.
+// Per-document fields `recentViews` and `windowStartTime` have been removed from the schema to avoid confusion.
 
 // Method to get full content with publication info
 contentSchema.methods.toPublicJSON = async function() {

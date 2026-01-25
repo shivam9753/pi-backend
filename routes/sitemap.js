@@ -111,7 +111,7 @@ router.get('/robots.txt', (req, res) => {
 router.clearCache = function() {
   sitemapCache.xml = null;
   sitemapCache.expiresAt = 0;
-  console.log('🗺️ Sitemap cache cleared');
+  // Sitemap cache cleared
 };
 
 module.exports = router;

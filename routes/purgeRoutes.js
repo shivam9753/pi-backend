@@ -112,13 +112,11 @@ router.post('/execute', async (req, res) => {
       }
     }
 
-    console.log(`🗑️ ADMIN PURGE INITIATED by ${req.user.email} for ${submissionIds.length} submissions`);
-
     const results = await PurgeService.executePurge(submissionIds, req.user._id);
 
     // Log the purge operation
     const logMessage = `Admin ${req.user.email} purged ${results.totalSubmissions} submissions, ${results.totalContent} content pieces, ${results.totalReviews} reviews`;
-    console.log(`🗑️ ${logMessage}`);
+    // ${logMessage}
 
     if (results.failed.length > 0) {
       return res.status(207).json({
@@ -149,8 +147,6 @@ router.post('/execute', async (req, res) => {
 router.post('/mark-existing', async (req, res) => {
   try {
     const result = await PurgeService.markExistingSubmissionsForPurge();
-    
-    console.log(`📋 Admin ${req.user.email} marked ${result.modified} existing submissions for purge eligibility`);
     
     res.json({
       success: true,

@@ -281,7 +281,6 @@ router.post('/users/:id/upload-profile-image',
   (req, res, next) => {
     upload.single('profileImage')(req, res, (err) => {
       if (err) {
-        console.log('❌ Multer error:', err.message);
         return res.status(400).json({ message: 'File upload error: ' + err.message });
       }
       next();
@@ -289,54 +288,32 @@ router.post('/users/:id/upload-profile-image',
   },
   async (req, res) => {
     try {
-      console.log('🔧 Profile image upload for user:', req.params.id);
-      console.log('🔧 File received:', req.file ? 'YES' : 'NO');
-      
       if (!req.file) {
-        console.log('❌ No file in request');
         return res.status(400).json({ message: 'No image file provided' });
       }
 
-      console.log('🔧 File details:', {
-        fieldname: req.file.fieldname,
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        size: req.file.size
-      });
-
       const user = await User.findById(req.params.id);
       if (!user) {
-        console.log('❌ User not found:', req.params.id);
         return res.status(404).json({ message: 'User not found' });
       }
 
-      console.log('🔧 User found:', user.name);
-
       // Upload image using ImageService
-      console.log('🔧 Starting ImageService upload...');
       const uploadResult = await ImageService.uploadImage(
         req.file.buffer, 
         req.file.originalname,
         { folder: 'profiles' }
       );
 
-      console.log('🔧 Upload result:', uploadResult);
-
       if (!uploadResult.success) {
-        console.log('❌ Image upload failed:', uploadResult.error);
         return res.status(500).json({ 
           message: 'Image upload failed', 
           error: uploadResult.error 
         });
       }
 
-      console.log('✅ Image uploaded successfully:', uploadResult.url);
-
       // Update user profile image
       user.profileImage = uploadResult.url;
       await user.save();
-
-      console.log('✅ User profile updated with image URL');
 
       res.json({
         success: true,
@@ -469,7 +446,6 @@ router.delete('/media', async (req, res) => {
 router.post('/media/bulk-delete', async (req, res) => {
   try {
     const { keys } = req.body;
-    console.log('ADMIN bulk-delete request received. keys count:', Array.isArray(keys) ? keys.length : 'invalid', 'keys:', keys);
     if (!Array.isArray(keys) || keys.length === 0) {
       return res.status(400).json({ success: false, message: 'keys array required' });
     }
@@ -488,7 +464,6 @@ router.post('/media/bulk-delete', async (req, res) => {
       }
     }
 
-    console.log('ADMIN bulk-delete results:', results);
     res.json({ success: true, results });
   } catch (err) {
     console.error('Bulk delete error', err);

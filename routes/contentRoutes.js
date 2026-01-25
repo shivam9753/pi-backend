@@ -647,16 +647,23 @@ router.get('/:slug', async (req, res) => {
   }
 });
 
-
 // POST /api/content/:contentId/view - Increment view count (simple approach like submissions)
 router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) => {
   try {
     const { contentId } = req.params;
-    const { windowDays = 7 } = req.body;
 
-    // Check if content is published via submission status
+    // Ensure contentId is ObjectId for aggregation matching
+    const mongoose = require('mongoose');
+    let objectId;
+    try {
+      objectId = mongoose.Types.ObjectId(contentId);
+    } catch (e) {
+      return res.status(400).json({ message: 'Invalid contentId' });
+    }
+
+    // Ensure the content exists and is published via submission status
     const pipeline = [
-      { $match: { _id: contentId } },
+      { $match: { _id: objectId } },
       {
         $lookup: {
           from: 'submissions',
@@ -675,32 +682,29 @@ router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) 
       return res.status(404).json({ message: 'Published content not found' });
     }
 
-    // Use the rolling window method (same as submissions)
     const content = await Content.findById(contentId);
     if (!content) {
       return res.status(404).json({ message: 'Content not found' });
     }
 
-    await content.logView(windowDays);
+    // Increment lifetime viewCount on content (atomic)
+    await Content.updateOne({ _id: contentId }, { $inc: { viewCount: 1 } });
 
-    // Also log view on the parent submission using the rolling window method
-    const Submission = require('../models/Submission');
-    try {
-      const submission = await Submission.findById(publishedContent[0].submission._id);
-      if (submission) {
-        await submission.logView(windowDays);
-      }
-    } catch (submissionError) {
-      console.warn('Error logging submission view:', submissionError);
-      // Don't fail if submission view update fails
-    }
+    // Upsert daily bucket for content
+    const DailyView = require('../models/DailyView');
+    const dateKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    await DailyView.updateOne(
+      { targetType: 'content', targetId: String(contentId), date: dateKey },
+      { $inc: { count: 1 }, $set: { updatedAt: new Date() } },
+      { upsert: true }
+    );
+
+    // Return updated lifetime viewCount (read fresh)
+    const updated = await Content.findById(contentId).select('viewCount');
 
     res.json({
       success: true,
-      viewCount: content.viewCount,
-      recentViews: content.recentViews,
-      windowStartTime: content.windowStartTime.toISOString(),
-      trendingScore: content.getTrendingScore()
+      viewCount: updated ? updated.viewCount : content.viewCount
     });
 
   } catch (error) {
@@ -830,27 +834,8 @@ router.get('/published', validatePagination, async (req, res) => {
     return router.handle(req, res);
     
   } catch (error) {
-    console.error('Error in deprecated published endpoint:', error);
-    res.status(500).json({ message: 'Error fetching published content', error: error.message });
-  }
-});
-
-
-// GET /api/content/by-author/:userId - Get published content by author - DEPRECATED
-router.get('/by-author/:userId', validateObjectId('userId'), validatePagination, async (req, res) => {
-  try {
-    console.warn('DEPRECATED: /api/content/by-author/:userId endpoint used. Please use /api/content?author=');
-    
-    // Forward to main endpoint with author parameter
-    req.query.author = req.params.userId;
-    req.query.published = 'true';
-    
-    // Use the refactored main handler
-    return router.handle(req, res);
-    
-  } catch (error) {
-    console.error('Error in deprecated by-author endpoint:', error);
-    res.status(500).json({ message: 'Error fetching content by author', error: error.message });
+    console.error('DEPRECATED /published handler failed:', error);
+    return res.status(500).json({ message: 'Internal server error' });
   }
 });
 
