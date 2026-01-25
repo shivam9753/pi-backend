@@ -26,7 +26,7 @@ const upload = multer({
   }
 });
 
-// GET /api/users/trending - Get trending authors based on featured content views (public)
+// GET /api/users/trending - Get trending authors based on recent submission views (public)
 router.get('/trending', async (req, res) => {
   try {
     const { limit = 5, windowDays = 7 } = req.query;
@@ -35,45 +35,39 @@ router.get('/trending', async (req, res) => {
 
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const DailyView = require('../models/DailyView');
-    const Content = require('../models/Content');
 
-    // Aggregate recent views from DailyView for content, join to submission and author, and compute per-author totals
+    // Aggregate recent views from DailyView for submissions, join to submission to get author, then group by author
     const pipeline = [
-      { $match: { targetType: 'content', updatedAt: { $gte: cutoff } } },
+      { $match: { targetType: 'submission', updatedAt: { $gte: cutoff } } },
       { $group: { _id: '$targetId', periodViews: { $sum: '$count' } } },
-      { $lookup: { from: 'content', localField: '_id', foreignField: '_id', as: 'content' } },
-      { $unwind: '$content' },
-      // Only featured content for this endpoint
-      { $match: { 'content.isFeatured': true } },
-      { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
+      { $lookup: { from: 'submissions', localField: '_id', foreignField: '_id', as: 'submission' } },
       { $unwind: '$submission' },
+      // Only published submissions should count
       { $match: { 'submission.status': 'published' } },
-      { $lookup: { from: 'users', localField: 'submission.userId', foreignField: '_id', as: 'author' } },
-      { $unwind: '$author' },
-      { $sort: { periodViews: -1 } },
       { $group: {
-          _id: '$author._id',
-          author: { $first: '$author' },
+          _id: '$submission.userId',
           totalViews: { $sum: '$periodViews' },
-          featuredCount: { $sum: 1 },
-          latestFeaturedContent: { $first: { _id: '$content._id', title: '$content.title', viewCount: '$content.viewCount', periodViews: '$periodViews' } }
+          submissionCount: { $sum: 1 },
+          topSubmission: { $first: { _id: '$submission._id', title: '$submission.title', periodViews: '$periodViews', viewCount: '$submission.viewCount' } }
         }
       },
       { $sort: { totalViews: -1 } },
       { $limit: limitNum },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'author' } },
+      { $unwind: '$author' },
       { $project: {
           _id: 1,
-          author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio', isFeatured: '$author.isFeatured', featuredAt: '$author.featuredAt' },
+          author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio' },
           totalViews: 1,
-          featuredCount: 1,
-          trendingContent: '$latestFeaturedContent'
-      } }
+          submissionCount: 1,
+          topSubmission: 1
+        }
+      }
     ];
 
-    const DailyResults = await DailyView.aggregate(pipeline);
+    const results = await DailyView.aggregate(pipeline);
 
-    res.json({ authors: DailyResults, total: DailyResults.length });
-
+    res.json({ authors: results, total: results.length });
   } catch (error) {
     console.error('Error fetching trending authors:', error);
     res.status(500).json({ message: 'Error fetching trending authors', error: error.message });
@@ -168,7 +162,7 @@ router.get('/', authenticateUser, requireAdmin, validatePagination, async (req, 
   }
 });
 
-// GET /api/users/trending - Get trending authors based on featured content views (public)
+// GET /api/users/trending - Get trending authors based on recent submission views (public)
 router.get('/trending', async (req, res) => {
   try {
     const { limit = 5, windowDays = 7 } = req.query;
@@ -177,45 +171,39 @@ router.get('/trending', async (req, res) => {
 
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const DailyView = require('../models/DailyView');
-    const Content = require('../models/Content');
 
-    // Aggregate recent views from DailyView for content, join to submission and author, and compute per-author totals
+    // Aggregate recent views from DailyView for submissions, join to submission to get author, then group by author
     const pipeline = [
-      { $match: { targetType: 'content', updatedAt: { $gte: cutoff } } },
+      { $match: { targetType: 'submission', updatedAt: { $gte: cutoff } } },
       { $group: { _id: '$targetId', periodViews: { $sum: '$count' } } },
-      { $lookup: { from: 'content', localField: '_id', foreignField: '_id', as: 'content' } },
-      { $unwind: '$content' },
-      // Only featured content for this endpoint
-      { $match: { 'content.isFeatured': true } },
-      { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
+      { $lookup: { from: 'submissions', localField: '_id', foreignField: '_id', as: 'submission' } },
       { $unwind: '$submission' },
+      // Only published submissions should count
       { $match: { 'submission.status': 'published' } },
-      { $lookup: { from: 'users', localField: 'submission.userId', foreignField: '_id', as: 'author' } },
-      { $unwind: '$author' },
-      { $sort: { periodViews: -1 } },
       { $group: {
-          _id: '$author._id',
-          author: { $first: '$author' },
+          _id: '$submission.userId',
           totalViews: { $sum: '$periodViews' },
-          featuredCount: { $sum: 1 },
-          latestFeaturedContent: { $first: { _id: '$content._id', title: '$content.title', viewCount: '$content.viewCount', periodViews: '$periodViews' } }
+          submissionCount: { $sum: 1 },
+          topSubmission: { $first: { _id: '$submission._id', title: '$submission.title', periodViews: '$periodViews', viewCount: '$submission.viewCount' } }
         }
       },
       { $sort: { totalViews: -1 } },
       { $limit: limitNum },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'author' } },
+      { $unwind: '$author' },
       { $project: {
           _id: 1,
-          author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio', isFeatured: '$author.isFeatured', featuredAt: '$author.featuredAt' },
+          author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio' },
           totalViews: 1,
-          featuredCount: 1,
-          trendingContent: '$latestFeaturedContent'
-      } }
+          submissionCount: 1,
+          topSubmission: 1
+        }
+      }
     ];
 
-    const DailyResults = await DailyView.aggregate(pipeline);
+    const results = await DailyView.aggregate(pipeline);
 
-    res.json({ authors: DailyResults, total: DailyResults.length });
-
+    res.json({ authors: results, total: results.length });
   } catch (error) {
     console.error('Error fetching trending authors:', error);
     res.status(500).json({ message: 'Error fetching trending authors', error: error.message });
@@ -310,7 +298,7 @@ router.get('/', authenticateUser, requireAdmin, validatePagination, async (req, 
   }
 });
 
-// GET /api/users/trending - Get trending authors based on featured content views (public)
+// GET /api/users/trending - Get trending authors based on recent submission views (public)
 router.get('/trending', async (req, res) => {
   try {
     const { limit = 5, windowDays = 7 } = req.query;
@@ -319,45 +307,39 @@ router.get('/trending', async (req, res) => {
 
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const DailyView = require('../models/DailyView');
-    const Content = require('../models/Content');
 
-    // Aggregate recent views from DailyView for content, join to submission and author, and compute per-author totals
+    // Aggregate recent views from DailyView for submissions, join to submission to get author, then group by author
     const pipeline = [
-      { $match: { targetType: 'content', updatedAt: { $gte: cutoff } } },
+      { $match: { targetType: 'submission', updatedAt: { $gte: cutoff } } },
       { $group: { _id: '$targetId', periodViews: { $sum: '$count' } } },
-      { $lookup: { from: 'content', localField: '_id', foreignField: '_id', as: 'content' } },
-      { $unwind: '$content' },
-      // Only featured content for this endpoint
-      { $match: { 'content.isFeatured': true } },
-      { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
+      { $lookup: { from: 'submissions', localField: '_id', foreignField: '_id', as: 'submission' } },
       { $unwind: '$submission' },
+      // Only published submissions should count
       { $match: { 'submission.status': 'published' } },
-      { $lookup: { from: 'users', localField: 'submission.userId', foreignField: '_id', as: 'author' } },
-      { $unwind: '$author' },
-      { $sort: { periodViews: -1 } },
       { $group: {
-          _id: '$author._id',
-          author: { $first: '$author' },
+          _id: '$submission.userId',
           totalViews: { $sum: '$periodViews' },
-          featuredCount: { $sum: 1 },
-          latestFeaturedContent: { $first: { _id: '$content._id', title: '$content.title', viewCount: '$content.viewCount', periodViews: '$periodViews' } }
+          submissionCount: { $sum: 1 },
+          topSubmission: { $first: { _id: '$submission._id', title: '$submission.title', periodViews: '$periodViews', viewCount: '$submission.viewCount' } }
         }
       },
       { $sort: { totalViews: -1 } },
       { $limit: limitNum },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'author' } },
+      { $unwind: '$author' },
       { $project: {
           _id: 1,
-          author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio', isFeatured: '$author.isFeatured', featuredAt: '$author.featuredAt' },
+          author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio' },
           totalViews: 1,
-          featuredCount: 1,
-          trendingContent: '$latestFeaturedContent'
-      } }
+          submissionCount: 1,
+          topSubmission: 1
+        }
+      }
     ];
 
-    const DailyResults = await DailyView.aggregate(pipeline);
+    const results = await DailyView.aggregate(pipeline);
 
-    res.json({ authors: DailyResults, total: DailyResults.length });
-
+    res.json({ authors: results, total: results.length });
   } catch (error) {
     console.error('Error fetching trending authors:', error);
     res.status(500).json({ message: 'Error fetching trending authors', error: error.message });
