@@ -285,6 +285,26 @@ submissionSchema.methods.addHistoryEntry = async function(action, newStatus, use
   return this;
 };
 
+// Static helper: populate contentIds into content documents (keeps order)
+submissionSchema.statics.populateContentIds = async function(submission) {
+  const Content = require('./Content');
+  if (!submission) return submission;
+
+  // Allow passing either a mongoose document or a plain object
+  const raw = (typeof submission.toObject === 'function') ? submission.toObject() : submission;
+  const ids = Array.isArray(raw.contentIds) ? raw.contentIds.filter(Boolean) : [];
+  if (!ids.length) return raw;
+
+  // Fetch contents and order them according to ids
+  const contents = await Content.find({ _id: { $in: ids } }).lean();
+  const map = new Map(contents.map(c => [String(c._id), c]));
+  const ordered = ids.map(id => map.get(String(id))).filter(Boolean);
+
+  // Return a plain object with populated contentIds
+  const result = { ...raw, contentIds: ordered };
+  return result;
+};
+
 // Static method: findTrending
 // Returns top published submissions ordered by trending views in the recent window (fallback to viewCount)
 submissionSchema.statics.findTrending = async function(limit = 10, windowDays = 7) {
