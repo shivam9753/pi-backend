@@ -647,23 +647,16 @@ router.get('/:slug', async (req, res) => {
   }
 });
 
-// POST /api/content/:contentId/view - Increment view count (simple approach like submissions)
-router.post('/:contentId/view', validateObjectId('contentId'), async (req, res) => {
+// POST /api/content/:contentId/view - Increment view count (accept string UUID ids)
+router.post('/:contentId/view', async (req, res) => {
   try {
     const { contentId } = req.params;
 
-    // Ensure contentId is ObjectId for aggregation matching
-    const mongoose = require('mongoose');
-    let objectId;
-    try {
-      objectId = mongoose.Types.ObjectId(contentId);
-    } catch (e) {
-      return res.status(400).json({ message: 'Invalid contentId' });
-    }
+    // Content._id in this schema may be a UUID-style string; avoid coercing to Mongo ObjectId
 
     // Ensure the content exists and is published via submission status
     const pipeline = [
-      { $match: { _id: objectId } },
+      { $match: { _id: contentId } },
       {
         $lookup: {
           from: 'submissions',
@@ -826,16 +819,13 @@ router.post('/:contentId/unfeature', authenticateUser, requireReviewer, validate
 router.get('/published', validatePagination, async (req, res) => {
   try {
     console.warn('DEPRECATED: /api/content/published endpoint used. Please use /api/content with published=true');
-    
     // Forward to main endpoint with published=true
     req.query.published = 'true';
-    
     // Use the refactored main handler
     return router.handle(req, res);
-    
   } catch (error) {
-    console.error('DEPRECATED /published handler failed:', error);
-    return res.status(500).json({ message: 'Internal server error' });
+    console.error('Error forwarding deprecated published endpoint:', error);
+    res.status(500).json({ message: 'Error handling request', error: error.message });
   }
 });
 

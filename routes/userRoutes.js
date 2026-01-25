@@ -26,7 +26,7 @@ const upload = multer({
   }
 });
 
-// GET /api/users/trending - Get trending authors based on recent submission views (public)
+// GET /api/users/trending - Get trending authors based on recent content views (public)
 router.get('/trending', async (req, res) => {
   try {
     const { limit = 5, windowDays = 7 } = req.query;
@@ -36,19 +36,25 @@ router.get('/trending', async (req, res) => {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const DailyView = require('../models/DailyView');
 
-    // Aggregate recent views from DailyView for submissions, join to submission to get author, then group by author
+    // Aggregate recent views from DailyView for content, join to content and submission, then group by author (submission.userId)
     const pipeline = [
-      { $match: { targetType: 'submission', updatedAt: { $gte: cutoff } } },
+      { $match: { targetType: 'content', updatedAt: { $gte: cutoff } } },
       { $group: { _id: '$targetId', periodViews: { $sum: '$count' } } },
-      { $lookup: { from: 'submissions', localField: '_id', foreignField: '_id', as: 'submission' } },
+      // lookup must use the actual Mongo collection name 'contents'
+      { $lookup: { from: 'contents', localField: '_id', foreignField: '_id', as: 'content' } },
+      { $unwind: '$content' },
+      // Join to submission to get author
+      { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
       { $unwind: '$submission' },
-      // Only published submissions should count
+      // Only count published submissions
       { $match: { 'submission.status': 'published' } },
+      // Sort by content period views so topContent per author is the most-viewed content
+      { $sort: { periodViews: -1 } },
       { $group: {
           _id: '$submission.userId',
           totalViews: { $sum: '$periodViews' },
-          submissionCount: { $sum: 1 },
-          topSubmission: { $first: { _id: '$submission._id', title: '$submission.title', periodViews: '$periodViews', viewCount: '$submission.viewCount' } }
+          contentCount: { $sum: 1 },
+          topSubmission: { $first: { _id: '$content._id', title: '$content.title', viewCount: '$content.viewCount', periodViews: '$periodViews' } }
         }
       },
       { $sort: { totalViews: -1 } },
@@ -59,17 +65,58 @@ router.get('/trending', async (req, res) => {
           _id: 1,
           author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio' },
           totalViews: 1,
-          submissionCount: 1,
+          contentCount: 1,
           topSubmission: 1
-        }
-      }
+      } }
     ];
 
-    const results = await DailyView.aggregate(pipeline);
+    const DailyResults = await DailyView.aggregate(pipeline);
 
-    res.json({ authors: results, total: results.length });
+    // If no recent DailyView buckets exist (e.g., migration or older data), fall back to content.viewCount aggregation
+    if (!DailyResults || DailyResults.length === 0) {
+      try {
+        const Content = require('../models/Content');
+
+        const fallbackPipeline = [
+          // Join to submission to ensure we only count published content
+          { $lookup: { from: 'submissions', localField: 'submissionId', foreignField: '_id', as: 'submission' } },
+          { $unwind: '$submission' },
+          { $match: { 'submission.status': 'published' } },
+          // Sort by lifetime viewCount so topSubmission per author is the most-viewed content
+          { $sort: { viewCount: -1 } },
+          { $group: {
+              _id: '$submission.userId',
+              totalViews: { $sum: { $ifNull: ['$viewCount', 0] } },
+              contentCount: { $sum: 1 },
+              topSubmission: { $first: { _id: '$_id', title: '$title', viewCount: '$viewCount' } }
+            }
+          },
+          { $sort: { totalViews: -1 } },
+          { $limit: limitNum },
+          { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'author' } },
+          { $unwind: '$author' },
+          { $project: {
+              _id: 1,
+              author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio' },
+              totalViews: 1,
+              contentCount: 1,
+              topSubmission: 1
+            }
+          }
+        ];
+
+        const fallbackResults = await Content.aggregate(fallbackPipeline);
+        return res.json({ authors: fallbackResults, total: fallbackResults.length });
+      } catch (fbErr) {
+        console.error('Fallback aggregation (Content.viewCount) failed:', fbErr);
+        // fall through to return DailyResults (empty) below
+      }
+    }
+
+    res.json({ authors: DailyResults, total: DailyResults.length });
+
   } catch (error) {
-    console.error('Error fetching trending authors:', error);
+    console.error('Error fetching trending authors (content-based):', error);
     res.status(500).json({ message: 'Error fetching trending authors', error: error.message });
   }
 });
@@ -162,7 +209,7 @@ router.get('/', authenticateUser, requireAdmin, validatePagination, async (req, 
   }
 });
 
-// GET /api/users/trending - Get trending authors based on recent submission views (public)
+// GET /api/users/trending - Get trending authors based on recent content views (public)
 router.get('/trending', async (req, res) => {
   try {
     const { limit = 5, windowDays = 7 } = req.query;
@@ -172,19 +219,25 @@ router.get('/trending', async (req, res) => {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const DailyView = require('../models/DailyView');
 
-    // Aggregate recent views from DailyView for submissions, join to submission to get author, then group by author
+    // Aggregate recent views from DailyView for content, join to content and submission, then group by author (submission.userId)
     const pipeline = [
-      { $match: { targetType: 'submission', updatedAt: { $gte: cutoff } } },
+      { $match: { targetType: 'content', updatedAt: { $gte: cutoff } } },
       { $group: { _id: '$targetId', periodViews: { $sum: '$count' } } },
-      { $lookup: { from: 'submissions', localField: '_id', foreignField: '_id', as: 'submission' } },
+      // lookup must use the actual Mongo collection name 'contents'
+      { $lookup: { from: 'contents', localField: '_id', foreignField: '_id', as: 'content' } },
+      { $unwind: '$content' },
+      // Join to submission to get author
+      { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
       { $unwind: '$submission' },
-      // Only published submissions should count
+      // Only count published submissions
       { $match: { 'submission.status': 'published' } },
+      // Sort by content period views so topContent per author is the most-viewed content
+      { $sort: { periodViews: -1 } },
       { $group: {
           _id: '$submission.userId',
           totalViews: { $sum: '$periodViews' },
-          submissionCount: { $sum: 1 },
-          topSubmission: { $first: { _id: '$submission._id', title: '$submission.title', periodViews: '$periodViews', viewCount: '$submission.viewCount' } }
+          contentCount: { $sum: 1 },
+          topSubmission: { $first: { _id: '$content._id', title: '$content.title', viewCount: '$content.viewCount', periodViews: '$periodViews' } }
         }
       },
       { $sort: { totalViews: -1 } },
@@ -195,17 +248,58 @@ router.get('/trending', async (req, res) => {
           _id: 1,
           author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio' },
           totalViews: 1,
-          submissionCount: 1,
+          contentCount: 1,
           topSubmission: 1
-        }
-      }
+      } }
     ];
 
-    const results = await DailyView.aggregate(pipeline);
+    const DailyResults = await DailyView.aggregate(pipeline);
 
-    res.json({ authors: results, total: results.length });
+    // If no recent DailyView buckets exist (e.g., migration or older data), fall back to content.viewCount aggregation
+    if (!DailyResults || DailyResults.length === 0) {
+      try {
+        const Content = require('../models/Content');
+
+        const fallbackPipeline = [
+          // Join to submission to ensure we only count published content
+          { $lookup: { from: 'submissions', localField: 'submissionId', foreignField: '_id', as: 'submission' } },
+          { $unwind: '$submission' },
+          { $match: { 'submission.status': 'published' } },
+          // Sort by lifetime viewCount so topSubmission per author is the most-viewed content
+          { $sort: { viewCount: -1 } },
+          { $group: {
+              _id: '$submission.userId',
+              totalViews: { $sum: { $ifNull: ['$viewCount', 0] } },
+              contentCount: { $sum: 1 },
+              topSubmission: { $first: { _id: '$_id', title: '$title', viewCount: '$viewCount' } }
+            }
+          },
+          { $sort: { totalViews: -1 } },
+          { $limit: limitNum },
+          { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'author' } },
+          { $unwind: '$author' },
+          { $project: {
+              _id: 1,
+              author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio' },
+              totalViews: 1,
+              contentCount: 1,
+              topSubmission: 1
+            }
+          }
+        ];
+
+        const fallbackResults = await Content.aggregate(fallbackPipeline);
+        return res.json({ authors: fallbackResults, total: fallbackResults.length });
+      } catch (fbErr) {
+        console.error('Fallback aggregation (Content.viewCount) failed:', fbErr);
+        // fall through to return DailyResults (empty) below
+      }
+    }
+
+    res.json({ authors: DailyResults, total: DailyResults.length });
+
   } catch (error) {
-    console.error('Error fetching trending authors:', error);
+    console.error('Error fetching trending authors (content-based):', error);
     res.status(500).json({ message: 'Error fetching trending authors', error: error.message });
   }
 });
@@ -298,7 +392,7 @@ router.get('/', authenticateUser, requireAdmin, validatePagination, async (req, 
   }
 });
 
-// GET /api/users/trending - Get trending authors based on recent submission views (public)
+// GET /api/users/trending - Get trending authors based on recent content views (public)
 router.get('/trending', async (req, res) => {
   try {
     const { limit = 5, windowDays = 7 } = req.query;
@@ -308,19 +402,25 @@ router.get('/trending', async (req, res) => {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const DailyView = require('../models/DailyView');
 
-    // Aggregate recent views from DailyView for submissions, join to submission to get author, then group by author
+    // Aggregate recent views from DailyView for content, join to content and submission, then group by author (submission.userId)
     const pipeline = [
-      { $match: { targetType: 'submission', updatedAt: { $gte: cutoff } } },
+      { $match: { targetType: 'content', updatedAt: { $gte: cutoff } } },
       { $group: { _id: '$targetId', periodViews: { $sum: '$count' } } },
-      { $lookup: { from: 'submissions', localField: '_id', foreignField: '_id', as: 'submission' } },
+      // lookup must use the actual Mongo collection name 'contents'
+      { $lookup: { from: 'contents', localField: '_id', foreignField: '_id', as: 'content' } },
+      { $unwind: '$content' },
+      // Join to submission to get author
+      { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
       { $unwind: '$submission' },
-      // Only published submissions should count
+      // Only count published submissions
       { $match: { 'submission.status': 'published' } },
+      // Sort by content period views so topContent per author is the most-viewed content
+      { $sort: { periodViews: -1 } },
       { $group: {
           _id: '$submission.userId',
           totalViews: { $sum: '$periodViews' },
-          submissionCount: { $sum: 1 },
-          topSubmission: { $first: { _id: '$submission._id', title: '$submission.title', periodViews: '$periodViews', viewCount: '$submission.viewCount' } }
+          contentCount: { $sum: 1 },
+          topSubmission: { $first: { _id: '$content._id', title: '$content.title', viewCount: '$content.viewCount', periodViews: '$periodViews' } }
         }
       },
       { $sort: { totalViews: -1 } },
@@ -331,17 +431,58 @@ router.get('/trending', async (req, res) => {
           _id: 1,
           author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio' },
           totalViews: 1,
-          submissionCount: 1,
+          contentCount: 1,
           topSubmission: 1
-        }
-      }
+      } }
     ];
 
-    const results = await DailyView.aggregate(pipeline);
+    const DailyResults = await DailyView.aggregate(pipeline);
 
-    res.json({ authors: results, total: results.length });
+    // If no recent DailyView buckets exist (e.g., migration or older data), fall back to content.viewCount aggregation
+    if (!DailyResults || DailyResults.length === 0) {
+      try {
+        const Content = require('../models/Content');
+
+        const fallbackPipeline = [
+          // Join to submission to ensure we only count published content
+          { $lookup: { from: 'submissions', localField: 'submissionId', foreignField: '_id', as: 'submission' } },
+          { $unwind: '$submission' },
+          { $match: { 'submission.status': 'published' } },
+          // Sort by lifetime viewCount so topSubmission per author is the most-viewed content
+          { $sort: { viewCount: -1 } },
+          { $group: {
+              _id: '$submission.userId',
+              totalViews: { $sum: { $ifNull: ['$viewCount', 0] } },
+              contentCount: { $sum: 1 },
+              topSubmission: { $first: { _id: '$_id', title: '$title', viewCount: '$viewCount' } }
+            }
+          },
+          { $sort: { totalViews: -1 } },
+          { $limit: limitNum },
+          { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'author' } },
+          { $unwind: '$author' },
+          { $project: {
+              _id: 1,
+              author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage', bio: '$author.bio' },
+              totalViews: 1,
+              contentCount: 1,
+              topSubmission: 1
+            }
+          }
+        ];
+
+        const fallbackResults = await Content.aggregate(fallbackPipeline);
+        return res.json({ authors: fallbackResults, total: fallbackResults.length });
+      } catch (fbErr) {
+        console.error('Fallback aggregation (Content.viewCount) failed:', fbErr);
+        // fall through to return DailyResults (empty) below
+      }
+    }
+
+    res.json({ authors: DailyResults, total: DailyResults.length });
+
   } catch (error) {
-    console.error('Error fetching trending authors:', error);
+    console.error('Error fetching trending authors (content-based):', error);
     res.status(500).json({ message: 'Error fetching trending authors', error: error.message });
   }
 });
