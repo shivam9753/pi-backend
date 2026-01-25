@@ -33,6 +33,9 @@ router.get('/trending', async (req, res) => {
     const days = Number.parseInt(windowDays, 10) || 7;
     const limitNum = Math.min(Number.parseInt(limit, 10) || 5, 50);
 
+    // New: allow filtering to only consider featured content (default: true)
+    const includeFeatured = req.query.featured === undefined ? true : String(req.query.featured) === 'true';
+
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const DailyView = require('../models/DailyView');
 
@@ -43,6 +46,8 @@ router.get('/trending', async (req, res) => {
       // lookup must use the actual Mongo collection name 'contents'
       { $lookup: { from: 'contents', localField: '_id', foreignField: '_id', as: 'content' } },
       { $unwind: '$content' },
+      // If requested, only consider featured content
+      ...(includeFeatured ? [{ $match: { 'content.isFeatured': true } }] : []),
       // Join to submission to get author
       { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
       { $unwind: '$submission' },
@@ -78,6 +83,8 @@ router.get('/trending', async (req, res) => {
         const Content = require('../models/Content');
 
         const fallbackPipeline = [
+          // If requested, only consider featured content
+          ...(includeFeatured ? [{ $match: { isFeatured: true } }] : []),
           // Join to submission to ensure we only count published content
           { $lookup: { from: 'submissions', localField: 'submissionId', foreignField: '_id', as: 'submission' } },
           { $unwind: '$submission' },
@@ -107,8 +114,8 @@ router.get('/trending', async (req, res) => {
 
         const fallbackResults = await Content.aggregate(fallbackPipeline);
         return res.json({ authors: fallbackResults, total: fallbackResults.length });
-      } catch (fbErr) {
-        console.error('Fallback aggregation (Content.viewCount) failed:', fbErr);
+      } catch (error_) {
+        console.error('Fallback aggregation (Content.viewCount) failed:', error_);
         // fall through to return DailyResults (empty) below
       }
     }
@@ -216,6 +223,9 @@ router.get('/trending', async (req, res) => {
     const days = Number.parseInt(windowDays, 10) || 7;
     const limitNum = Math.min(Number.parseInt(limit, 10) || 5, 50);
 
+    // New: allow filtering to only consider featured content (default: true)
+    const includeFeatured = req.query.featured === undefined ? true : String(req.query.featured) === 'true';
+
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const DailyView = require('../models/DailyView');
 
@@ -226,6 +236,8 @@ router.get('/trending', async (req, res) => {
       // lookup must use the actual Mongo collection name 'contents'
       { $lookup: { from: 'contents', localField: '_id', foreignField: '_id', as: 'content' } },
       { $unwind: '$content' },
+      // If requested, only consider featured content
+      ...(includeFeatured ? [{ $match: { 'content.isFeatured': true } }] : []),
       // Join to submission to get author
       { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
       { $unwind: '$submission' },
@@ -261,6 +273,8 @@ router.get('/trending', async (req, res) => {
         const Content = require('../models/Content');
 
         const fallbackPipeline = [
+          // If requested, only consider featured content
+          ...(includeFeatured ? [{ $match: { isFeatured: true } }] : []),
           // Join to submission to ensure we only count published content
           { $lookup: { from: 'submissions', localField: 'submissionId', foreignField: '_id', as: 'submission' } },
           { $unwind: '$submission' },
@@ -290,8 +304,8 @@ router.get('/trending', async (req, res) => {
 
         const fallbackResults = await Content.aggregate(fallbackPipeline);
         return res.json({ authors: fallbackResults, total: fallbackResults.length });
-      } catch (fbErr) {
-        console.error('Fallback aggregation (Content.viewCount) failed:', fbErr);
+      } catch (error_) {
+        console.error('Fallback aggregation (Content.viewCount) failed:', error_);
         // fall through to return DailyResults (empty) below
       }
     }
@@ -399,6 +413,9 @@ router.get('/trending', async (req, res) => {
     const days = Number.parseInt(windowDays, 10) || 7;
     const limitNum = Math.min(Number.parseInt(limit, 10) || 5, 50);
 
+    // New: allow filtering to only consider featured content (default: true)
+    const includeFeatured = req.query.featured === undefined ? true : String(req.query.featured) === 'true';
+
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const DailyView = require('../models/DailyView');
 
@@ -409,6 +426,8 @@ router.get('/trending', async (req, res) => {
       // lookup must use the actual Mongo collection name 'contents'
       { $lookup: { from: 'contents', localField: '_id', foreignField: '_id', as: 'content' } },
       { $unwind: '$content' },
+      // If requested, only consider featured content
+      ...(includeFeatured ? [{ $match: { 'content.isFeatured': true } }] : []),
       // Join to submission to get author
       { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
       { $unwind: '$submission' },
@@ -444,6 +463,8 @@ router.get('/trending', async (req, res) => {
         const Content = require('../models/Content');
 
         const fallbackPipeline = [
+          // If requested, only consider featured content
+          ...(includeFeatured ? [{ $match: { isFeatured: true } }] : []),
           // Join to submission to ensure we only count published content
           { $lookup: { from: 'submissions', localField: 'submissionId', foreignField: '_id', as: 'submission' } },
           { $unwind: '$submission' },
@@ -473,8 +494,8 @@ router.get('/trending', async (req, res) => {
 
         const fallbackResults = await Content.aggregate(fallbackPipeline);
         return res.json({ authors: fallbackResults, total: fallbackResults.length });
-      } catch (fbErr) {
-        console.error('Fallback aggregation (Content.viewCount) failed:', fbErr);
+      } catch (error_) {
+        console.error('Fallback aggregation (Content.viewCount) failed:', error_);
         // fall through to return DailyResults (empty) below
       }
     }
