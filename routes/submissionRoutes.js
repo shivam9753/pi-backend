@@ -1115,4 +1115,24 @@ router.post('/', authenticateUser, validateSubmissionCreation, async (req, res) 
   }
 });
 
+// GET /api/submissions/by-slug/:slug - Public reading interface by SEO slug
+router.get('/by-slug/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    if (!slug || typeof slug !== 'string') {
+      return res.status(400).json({ success: false, message: 'Slug is required' });
+    }
+
+    // Use SubmissionService which normalizes slug and populates contents/tags
+    const submission = await SubmissionService.getBySlug(slug);
+    return res.json({ success: true, submission });
+  } catch (error) {
+    console.error('Error fetching submission by slug:', error && (error.message || error));
+    if (error && (error.message === 'Published submission not found' || error.message === 'Submission not found')) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    return res.status(500).json({ success: false, message: 'Error fetching submission', error: error.message });
+  }
+});
+
 module.exports = router;
