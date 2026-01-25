@@ -285,6 +285,53 @@ submissionSchema.methods.addHistoryEntry = async function(action, newStatus, use
   return this;
 };
 
+// Instance method to change status with history tracking
+submissionSchema.methods.changeStatus = async function(newStatus, user, notes = '') {
+  const { STATUS_UTILS } = require('../constants/status.constants');
+
+  if (!newStatus || typeof newStatus !== 'string') {
+    throw new Error('A valid newStatus string is required');
+  }
+
+  // Validate status value
+  if (!STATUS_UTILS.isValidSubmissionStatus(newStatus)) {
+    throw new Error(`Invalid status: ${newStatus}`);
+  }
+
+  const fromStatus = this.status || '';
+  // Allow staying in same status; otherwise validate transition
+  if (fromStatus && fromStatus !== newStatus && !STATUS_UTILS.isValidStatusTransition(fromStatus, newStatus)) {
+    throw new Error(`Invalid status transition from ${fromStatus} to ${newStatus}`);
+  }
+
+  // Normalize user input
+  let userId = null;
+  let userRole = null;
+  if (user) {
+    if (typeof user === 'string') {
+      userId = user;
+    } else if (typeof user === 'object') {
+      userId = user._id || user.id || user.userId || null;
+      userRole = user.role || null;
+    }
+  }
+
+  if (!userId) {
+    throw new Error('User information is required to change status');
+  }
+
+  // Determine the action corresponding to the status
+  let action = STATUS_UTILS.getActionForStatus(newStatus) || newStatus;
+
+  // Add history entry (this will also set status/reviewedAt/reviewedBy where appropriate)
+  await this.addHistoryEntry(action, newStatus, String(userId), userRole, notes || '');
+
+  // Persist change
+  await this.save();
+
+  return this;
+};
+
 // Static helper: populate contentIds into content documents (keeps order)
 submissionSchema.statics.populateContentIds = async function(submission) {
   const Content = require('./Content');
@@ -394,6 +441,51 @@ submissionSchema.statics.findBySlug = async function(slug) {
     .lean();
 
   return submission;
+};
+
+// Static helper: calculate reading time from an array of content documents
+submissionSchema.statics.calculateReadingTime = function(contents) {
+  if (!Array.isArray(contents) || contents.length === 0) return 1;
+  const Content = require('./Content');
+
+  // Sum words across titles and bodies
+  let totalWords = 0;
+  contents.forEach(c => {
+    try {
+      const title = (c.title || '').toString();
+      const body = (c.body || '').toString();
+      // Prefer Content.calculateWordCount if available
+      if (typeof Content.calculateWordCount === 'function') {
+        totalWords += Content.calculateWordCount(title) + Content.calculateWordCount(body);
+      } else {
+        const strip = (s) => s.replace(/<[^>]*>/g, ' ');
+        const words = (strip(title) + ' ' + strip(body)).trim().split(/\s+/).filter(Boolean).length;
+        totalWords += words;
+      }
+    } catch (e) {
+      // ignore individual content errors
+    }
+  });
+
+  // Fallback minimal reading time is 1 minute
+  const wordsPerMinute = 200;
+  const minutes = Math.max(1, Math.ceil(totalWords / wordsPerMinute));
+  return minutes;
+};
+
+// Static helper: generate a short excerpt from contents
+submissionSchema.statics.generateExcerpt = function(contents, maxLength = 200) {
+  if (!Array.isArray(contents) || contents.length === 0) return '';
+
+  const first = contents[0];
+  let text = '';
+  if (first.title) text += String(first.title) + ' - ';
+  if (first.body) text += String(first.body);
+
+  // strip HTML
+  text = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength).trim() + '...';
 };
 
 module.exports = mongoose.model('Submission', submissionSchema);
