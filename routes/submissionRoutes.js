@@ -1184,4 +1184,46 @@ router.get('/random', async (req, res) => {
   }
 });
 
+// POST /api/submissions/:id/publish-with-seo - Configure SEO and publish a submission
+router.post('/:id/publish-with-seo', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const seoData = req.body || {};
+    const publisherId = req.user._id;
+
+    const published = await SubmissionService.publishWithSEO(id, seoData, publisherId);
+    return res.json({ success: true, message: 'Submission published with SEO', submission: published });
+  } catch (error) {
+    console.error('Error in publish-with-seo route:', error);
+    if (error && error.message === 'Submission not found') {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    return res.status(500).json({ success: false, message: 'Error publishing submission', error: error.message });
+  }
+});
+
+// PATCH /api/submissions/:id/unpublish - Unpublish a submission (admin only)
+router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const notes = req.body && req.body.notes ? String(req.body.notes).trim() : null;
+
+    const submission = await Submission.findById(id);
+    if (!submission) return res.status(404).json({ success: false, message: 'Submission not found' });
+
+    // Move submission back to 'accepted' (preserve other fields) and clear reviewed metadata
+    submission.status = SUBMISSION_STATUS.ACCEPTED || 'accepted';
+    submission.reviewedAt = null;
+    submission.reviewedBy = null;
+    if (notes) submission.revisionNotes = notes;
+
+    await submission.save();
+
+    return res.json({ success: true, message: 'Submission unpublished and moved to accepted status', submission });
+  } catch (error) {
+    console.error('Error in unpublish route:', error);
+    return res.status(500).json({ success: false, message: 'Error unpublishing submission', error: error.message });
+  }
+});
+
 module.exports = router;

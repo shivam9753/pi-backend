@@ -503,21 +503,32 @@ class SubmissionService {
       throw new Error('Submission not found');
     }
 
-    // Delete associated content
-    if (submission.contentIds && submission.contentIds.length > 0) {
-      await Content.deleteMany({ _id: { $in: submission.contentIds } });
+    // Delete associated content. Use both submission.contentIds and submissionId fallback
+    try {
+      const query = [];
+      if (Array.isArray(submission.contentIds) && submission.contentIds.length > 0) {
+        query.push({ _id: { $in: submission.contentIds } });
+      }
+      // Always include submissionId fallback to catch any content rows referencing the submission
+      query.push({ submissionId: id });
+
+      const deleteResult = await Content.deleteMany({ $or: query });
+
+      // Delete associated reviews
+      await Review.deleteMany({ submissionId: id });
+
+      // Delete submission
+      await Submission.findByIdAndDelete(id);
+
+      return {
+        message: 'Submission and associated content deleted successfully',
+        contentDeleted: typeof deleteResult.deletedCount === 'number' ? deleteResult.deletedCount : 0
+      };
+    } catch (err) {
+      // On error, log and rethrow for the route layer to surface
+      console.error('Error deleting submission and contents:', err && (err.message || err));
+      throw err;
     }
-
-    // Delete associated reviews
-    await Review.deleteMany({ submissionId: id });
-
-    // Delete submission
-    await Submission.findByIdAndDelete(id);
-
-    return {
-      message: 'Submission and associated content deleted successfully',
-      contentDeleted: submission.contentIds ? submission.contentIds.length : 0
-    };
   }
 
   static async createSubmissionWithProfile(submissionData, profileImage) {
