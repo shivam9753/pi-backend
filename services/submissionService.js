@@ -15,7 +15,7 @@ const tagService = require('./tagService');
 class SubmissionService {
   static async createSubmission(submissionData) {
     const { userId, authorId, title, description, submissionType, contents, profileData, status } = submissionData;
-    
+
     // Handle both userId and authorId (frontend compatibility)
     const actualUserId = userId || authorId;
 
@@ -44,34 +44,90 @@ class SubmissionService {
       excerpt: '' // Default, will be updated
     });
 
-    const savedSubmission = await submission.save();
-
-    // Now create content items with submissionId
-    // Ensure we do NOT persist any tag data coming from the client at submission creation time.
-    // Tags will be created/associated only during content publish flows.
-    const contentDocs = contents.map(content => ({
+    // Prepare content documents (do this before any DB ops so we can reuse in both transactional and fallback flows)
+    const contentDocs = Array.isArray(contents) ? contents.map(content => ({
       title: content.title,
       body: content.body,
       type: content.type || submissionType,
       userId: actualUserId,
-      submissionId: savedSubmission._id,
+      submissionId: submission._id, // this will be the generated id even before save because _id default is deterministic (uuid)
       footnotes: content.footnotes || '',
       tags: [], // explicitly empty to avoid persisting client-sent tags
       seo: content.seo || {}
-    }));
+    })) : [];
 
-    const createdContents = await Content.create(contentDocs);
-    
-    // Calculate reading time and excerpt
-    const readingTime = Submission.calculateReadingTime(createdContents);
-    const excerpt = Submission.generateExcerpt(createdContents);
+    // Try to perform creation in a transaction when supported to avoid partial writes (contents created but submission not updated)
+    let session = null;
+    try {
+      if (typeof mongoose.startSession === 'function') {
+        session = await mongoose.startSession();
+        session.startTransaction();
+      }
 
-    // Update submission with content IDs and calculated values
-    savedSubmission.contentIds = createdContents.map(c => c._id);
-    savedSubmission.readingTime = readingTime;
-    savedSubmission.excerpt = excerpt;
+      // Save submission (within session if available)
+      const savedSubmission = await submission.save({ session });
 
-    return await savedSubmission.save();
+      // Use insertMany for bulk creation (honors session when provided)
+      const createdContents = await Content.insertMany(contentDocs, { session, ordered: true });
+
+      // Calculate reading time and excerpt
+      const readingTime = Submission.calculateReadingTime(createdContents);
+      const excerpt = Submission.generateExcerpt(createdContents);
+
+      // Ensure we store string IDs consistently
+      const contentIds = createdContents.map(c => String(c._id));
+
+      // Update submission atomically (within transaction if available)
+      const updatedSubmission = await Submission.findByIdAndUpdate(
+        savedSubmission._id,
+        { $set: { contentIds, readingTime, excerpt } },
+        { new: true, session }
+      );
+
+      if (session) {
+        await session.commitTransaction();
+        session.endSession();
+      }
+
+      return updatedSubmission || savedSubmission;
+    } catch (err) {
+      // Abort transaction if something went wrong
+      if (session) {
+        try {
+          await session.abortTransaction();
+        } catch (e) {
+          // ignore
+        }
+        session.endSession();
+      }
+
+      // Log the failure and attempt a safe non-transactional fallback
+      console.warn('SubmissionService.createSubmission transaction failed, falling back to non-transactional flow:', err && (err.message || err));
+
+      try {
+        // Ensure submission exists (save if not already saved)
+        let savedSubmissionFallback = await Submission.findById(submission._id);
+        if (!savedSubmissionFallback) {
+          savedSubmissionFallback = await submission.save();
+        }
+
+        // Create contents (non-transactional)
+        const createdContentsFallback = await Content.create(contentDocs);
+
+        const readingTime = Submission.calculateReadingTime(createdContentsFallback);
+        const excerpt = Submission.generateExcerpt(createdContentsFallback);
+        const contentIds = createdContentsFallback.map(c => String(c._id));
+
+        // Use findByIdAndUpdate (atomic single write) to ensure contentIds are written even if previous save succeeded
+        await Submission.findByIdAndUpdate(savedSubmissionFallback._id, { $set: { contentIds, readingTime, excerpt } });
+
+        return await Submission.findById(savedSubmissionFallback._id);
+      } catch (fallbackErr) {
+        // If fallback fails, log and throw the original error for upper layers to handle
+        console.error('SubmissionService.createSubmission fallback failed:', fallbackErr && (fallbackErr.message || fallbackErr));
+        throw err;
+      }
+    }
   }
 
   static async getAcceptedSubmissions(filters = {}) {
