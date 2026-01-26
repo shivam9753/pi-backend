@@ -118,6 +118,58 @@ app.use(cors({
   credentials: true
 }));
 
+// Force HTML (SSR) responses to never be cached by browsers/proxies/CDNs
+app.use((req, res, next) => {
+  try {
+    if (req.method === 'GET') {
+      const accept = (req.headers.accept || '').toLowerCase();
+      const wantsHtml = accept.includes('text/html') || req.path === '/' || req.path.endsWith('.html') || req.path === '/index.html';
+      if (wantsHtml) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('Surrogate-Control', 'no-store');
+      }
+    }
+  } catch (e) {
+    // don't block request on header-setting errors
+    console.warn('Failed to set no-cache headers:', e && e.message);
+  }
+  next();
+});
+
+// Expose a simple build/version endpoint that is never cached (helpful for health/debug)
+app.get('/version.json', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.json({ version: process.env.BUILD_VERSION || Date.now() });
+});
+
+// Serve long-cache headers for static assets (JS/CSS/images/fonts). This complements the no-cache HTML policy above.
+app.use((req, res, next) => {
+  try {
+    if (req.method === 'GET') {
+      const url = req.path || '';
+
+      // Consider typical static asset locations and file extensions
+      const isAssetPath = url.startsWith('/assets') || url.startsWith('/static') || url.includes('/dist/') || url.includes('/browser/');
+      const isAssetExt = /\.(js|css|png|jpg|jpeg|svg|webp|gif|woff2?|ttf|eot|map)$/i.test(url);
+
+      // Don't accidentally cache HTML
+      const isHtml = /\.(html?)$/i.test(url) || url === '/' || url.endsWith('/index.html');
+
+      if (!isHtml && (isAssetPath || isAssetExt)) {
+        // Long cache for immutable hashed assets (one year)
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to set asset cache headers:', e && e.message);
+  }
+  next();
+});
+
 // Connect to MongoDB (both Mongoose and native client)
 const { connectDB: connectMongooseDB } = require('./config/database');
 const { connectDB: connectNativeDB } = require('./db');
