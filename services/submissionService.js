@@ -531,6 +531,60 @@ class SubmissionService {
     }
   }
 
+  // New: Bulk delete multiple submissions and their related Content/Review documents
+  static async deleteSubmissions(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new Error('ids array required');
+    }
+
+    const uniqueIds = [...new Set(ids.map(i => String(i)) )];
+    let session = null;
+
+    try {
+      if (typeof mongoose.startSession === 'function') {
+        session = await mongoose.startSession();
+        session.startTransaction();
+      }
+
+      // Delete contents that reference these submissions (by submissionId)
+      const contentDeleteResult = await Content.deleteMany(
+        { submissionId: { $in: uniqueIds } },
+        session ? { session } : undefined
+      );
+
+      // Delete any reviews linked to these submissions
+      const reviewDeleteResult = await Review.deleteMany(
+        { submissionId: { $in: uniqueIds } },
+        session ? { session } : undefined
+      );
+
+      // Finally delete the submissions themselves
+      const submissionDeleteResult = await Submission.deleteMany(
+        { _id: { $in: uniqueIds } },
+        session ? { session } : undefined
+      );
+
+      if (session) {
+        await session.commitTransaction();
+        session.endSession();
+      }
+
+      return {
+        message: 'Bulk delete completed',
+        deletedSubmissions: typeof submissionDeleteResult.deletedCount === 'number' ? submissionDeleteResult.deletedCount : 0,
+        deletedContents: typeof contentDeleteResult.deletedCount === 'number' ? contentDeleteResult.deletedCount : 0,
+        deletedReviews: typeof reviewDeleteResult.deletedCount === 'number' ? reviewDeleteResult.deletedCount : 0
+      };
+    } catch (err) {
+      if (session) {
+        try { await session.abortTransaction(); } catch (e) { /* ignore */ }
+        session.endSession();
+      }
+      console.error('Error deleting multiple submissions:', err && (err.message || err));
+      throw err;
+    }
+  }
+
   static async createSubmissionWithProfile(submissionData, profileImage) {
     const { userId, authorId, title, description, submissionType, contents, profileData } = submissionData;
     

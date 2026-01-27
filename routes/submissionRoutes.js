@@ -1226,4 +1226,38 @@ router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId(
   }
 });
 
+// POST /api/submissions/bulk-delete - Bulk delete multiple submissions and their contents (Admin only)
+router.post('/bulk-delete', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'ids array required' });
+    }
+
+    // Normalize to string IDs and dedupe
+    const normalized = [...new Set(ids.map(id => String(id)))];
+
+    const result = await SubmissionService.deleteSubmissions(normalized);
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error in bulk-delete route:', error);
+    res.status(500).json({ success: false, message: 'Error deleting submissions', error: error.message });
+  }
+});
+
+// DELETE /api/submissions/:id - Permanently delete a submission and its contents (Admin only)
+router.delete('/:id', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await SubmissionService.deleteSubmission(id);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error deleting submission:', error);
+    if (error.message === 'Submission not found') {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    res.status(500).json({ success: false, message: 'Error deleting submission', error: error.message });
+  }
+});
+
 module.exports = router;
