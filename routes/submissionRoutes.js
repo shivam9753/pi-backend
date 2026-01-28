@@ -38,6 +38,101 @@ const upload = multer({
   }
 });
 
+// POST /api/submissions/:id/upload-image - Upload image for a submission (used by frontend)
+router.post('/:id/upload-image',
+  (req, res, next) => {
+    // Use multer to handle file upload and surface friendly errors
+    upload.single('image')(req, res, (err) => {
+      if (err) {
+        console.error('Submission image upload error (multer):', err);
+        return res.status(400).json({ success: false, message: 'File upload error: ' + err.message });
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const submission = await Submission.findById(id);
+      if (!submission) {
+        return res.status(404).json({ success: false, message: 'Submission not found' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: 'No image file provided' });
+      }
+
+      const { temporary = 'false', folder: customFolder } = req.body;
+      const isTemporary = temporary === 'true' || temporary === true;
+
+      const folderMap = {
+        'article': 'articles',
+        'cinema_essay': 'essays',
+        'story': 'stories',
+        'poem': 'poems'
+      };
+      const baseFolder = customFolder === 'profiles' ? 'profiles' : (folderMap[submission.submissionType] || folderMap['article'] || 'general');
+      const folder = isTemporary ? `temp/${baseFolder}` : baseFolder;
+
+      const uploadOptions = {
+        quality: 85,
+        maxWidth: 1200,
+        maxHeight: 800,
+        format: 'jpeg',
+        folder: folder
+      };
+
+      // Upload using environment-aware service
+      const uploadResult = await ImageService.uploadImage(
+        req.file.buffer,
+        req.file.originalname,
+        uploadOptions
+      );
+
+      if (!uploadResult || !uploadResult.success) {
+        console.error('Submission image upload failed:', uploadResult);
+        return res.status(500).json({ success: false, message: 'Failed to upload image', error: uploadResult ? uploadResult.error : 'Unknown upload failure' });
+      }
+
+      const publicUrl = uploadResult.cdnUrl || uploadResult.url || uploadResult.fileUrl || '';
+
+      // In production if storage expected to be s3, avoid returning local fallback
+      try {
+        const storageType = ImageService.getStorageType ? ImageService.getStorageType() : (process.env.NODE_ENV === 'production' ? 's3' : 'local');
+        if (storageType === 's3' && uploadResult.fallbackUsed) {
+          console.error('S3 expected but fallback used for submission image upload');
+          return res.status(500).json({ success: false, message: 'S3 upload expected but fallback to local storage occurred. Check server S3 configuration.' });
+        }
+      } catch (e) {
+        console.warn('Could not determine storage type for submission image upload:', e && e.message ? e.message : e);
+      }
+
+      // Update submission with image url and save
+      submission.imageUrl = publicUrl;
+      await submission.save();
+
+      res.json({
+        success: true,
+        image: {
+          url: publicUrl,
+          cdnUrl: uploadResult.cdnUrl || null,
+          s3Key: uploadResult.fileName || uploadResult.key || null,
+          originalName: req.file.originalname,
+          size: uploadResult.size,
+          originalSize: uploadResult.originalSize,
+          dimensions: uploadResult.dimensions,
+          temporary: isTemporary,
+          fallbackUsed: !!uploadResult.fallbackUsed
+        }
+      });
+
+    } catch (error) {
+      console.error('Error in submission image upload endpoint:', error);
+      res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
+    }
+  }
+);
+
 // ========================================
 // DEBUG ENDPOINT - TEMPORARY
 // ========================================

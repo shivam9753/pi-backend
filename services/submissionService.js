@@ -839,10 +839,20 @@ class SubmissionService {
          }
          const combined = Array.from(combinedSet); // array of id strings (UUIDs or hex)
 
+         // Allow callers to provide perContentTitles in the publish payload to persist title changes
+         // payload shape (frontend): { perContentTitles: { '<contentId>': 'New Title', ... } }
+         const setObj = { tags: combined };
+         if (seoData && seoData.perContentTitles && seoData.perContentTitles[cid]) {
+           const providedTitle = String(seoData.perContentTitles[cid]).trim();
+           if (providedTitle.length > 0) {
+             setObj.title = providedTitle;
+           }
+         }
+
          contentBulkOps.push({
            updateOne: {
              filter: { _id: c._id },
-             update: { $set: { tags: combined } }
+             update: { $set: setObj }
            }
          });
        }
