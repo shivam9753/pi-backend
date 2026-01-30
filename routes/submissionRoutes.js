@@ -947,7 +947,13 @@ router.get('/user/me', authenticateUser, async (req, res) => {
     res.set('X-API-Replacement', '/api/submissions/explore?user=me');
     res.set('X-API-Alternative', '/api/users/profile (for user data + stats)');
 
-    const submissions = await SubmissionService.getUserSubmissions(req.user.userId);
+    // Accept pagination and filtering query params and forward to the service
+    const limit = Number.parseInt(req.query.limit || '20', 10);
+    const skip = Number.parseInt(req.query.skip || '0', 10);
+    const status = req.query.status || null;
+    const type = req.query.type || null;
+
+    const submissions = await SubmissionService.getUserSubmissions(req.user.userId, { limit, skip, status, type });
     res.json({ submissions });
   } catch (error) {
     console.error('Error in /user/me:', error);

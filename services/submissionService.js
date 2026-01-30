@@ -436,6 +436,36 @@ class SubmissionService {
       .skip(Number(skip))
       .lean();
 
+    // Attach latest review notes (if any) from Review collection for each submission
+    try {
+      const submissionIds = Array.isArray(submissions) ? submissions.map(s => s._id).filter(Boolean) : [];
+      if (submissionIds.length > 0) {
+        // Load reviews for these submissions ordered by newest first and pick the first per submission
+        const reviews = await Review.find({ submissionId: { $in: submissionIds } })
+          .sort({ createdAt: -1 })
+          .lean();
+
+        const latestBySubmission = new Map();
+        for (const r of reviews) {
+          const sid = String(r.submissionId);
+          if (!latestBySubmission.has(sid)) {
+            latestBySubmission.set(sid, r);
+          }
+        }
+
+        submissions.forEach(s => {
+          const r = latestBySubmission.get(String(s._id));
+          s.revisionNotes = r ? (r.reviewNotes || '') : '';
+        });
+      } else {
+        // Ensure property exists for consistency
+        (submissions || []).forEach(s => { s.revisionNotes = ''; });
+      }
+    } catch (err) {
+      console.warn('Failed to attach revision notes to submissions:', err && (err.message || err));
+      (submissions || []).forEach(s => { s.revisionNotes = ''; });
+    }
+
     return submissions;
   }
 
@@ -1206,6 +1236,36 @@ class SubmissionService {
       .skip(Number(skip))
       .lean();
 
+    // Attach latest review notes (if any) from Review collection for each submission
+    try {
+      const submissionIds = Array.isArray(submissions) ? submissions.map(s => s._id).filter(Boolean) : [];
+      if (submissionIds.length > 0) {
+        // Load reviews for these submissions ordered by newest first and pick the first per submission
+        const reviews = await Review.find({ submissionId: { $in: submissionIds } })
+          .sort({ createdAt: -1 })
+          .lean();
+
+        const latestBySubmission = new Map();
+        for (const r of reviews) {
+          const sid = String(r.submissionId);
+          if (!latestBySubmission.has(sid)) {
+            latestBySubmission.set(sid, r);
+          }
+        }
+
+        submissions.forEach(s => {
+          const r = latestBySubmission.get(String(s._id));
+          s.revisionNotes = r ? (r.reviewNotes || '') : '';
+        });
+      } else {
+        // Ensure property exists for consistency
+        (submissions || []).forEach(s => { s.revisionNotes = ''; });
+      }
+    } catch (err) {
+      console.warn('Failed to attach revision notes to submissions:', err && (err.message || err));
+      (submissions || []).forEach(s => { s.revisionNotes = ''; });
+    }
+
     return submissions;
   }
 
@@ -1975,6 +2035,36 @@ class SubmissionService {
       .limit(Number(limit))
       .skip(Number(skip))
       .lean();
+
+    // Attach latest review notes (if any) from Review collection for each submission
+    try {
+      const submissionIds = Array.isArray(submissions) ? submissions.map(s => s._id).filter(Boolean) : [];
+      if (submissionIds.length > 0) {
+        // Load reviews for these submissions ordered by newest first and pick the first per submission
+        const reviews = await Review.find({ submissionId: { $in: submissionIds } })
+          .sort({ createdAt: -1 })
+          .lean();
+
+        const latestBySubmission = new Map();
+        for (const r of reviews) {
+          const sid = String(r.submissionId);
+          if (!latestBySubmission.has(sid)) {
+            latestBySubmission.set(sid, r);
+          }
+        }
+
+        submissions.forEach(s => {
+          const r = latestBySubmission.get(String(s._id));
+          s.revisionNotes = r ? (r.reviewNotes || '') : '';
+        });
+      } else {
+        // Ensure property exists for consistency
+        (submissions || []).forEach(s => { s.revisionNotes = ''; });
+      }
+    } catch (err) {
+      console.warn('Failed to attach revision notes to submissions:', err && (err.message || err));
+      (submissions || []).forEach(s => { s.revisionNotes = ''; });
+    }
 
     return submissions;
   }
