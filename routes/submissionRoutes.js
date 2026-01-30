@@ -1220,6 +1220,7 @@ router.get('/by-slug/:slug', async (req, res) => {
 
     // Use SubmissionService which normalizes slug and populates contents/tags
     const submission = await SubmissionService.getBySlug(slug);
+    if (!submission) return res.status(404).json({ success: false, message: 'Published submission not found' });
     return res.json({ success: true, submission });
   } catch (error) {
     console.error('Error fetching submission by slug:', error && (error.message || error));

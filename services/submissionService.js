@@ -839,324 +839,57 @@ class SubmissionService {
          }
          const combined = Array.from(combinedSet); // array of id strings (UUIDs or hex)
 
-         // Allow callers to provide perContentTitles in the publish payload to persist title changes
-         // payload shape (frontend): { perContentTitles: { '<contentId>': 'New Title', ... } }
+         // Build update object: always set tags, and also persist any content fields provided by the client
+         // The publish payload may include per-content updates under `perContentUpdates` or `perContent`.
+         // Support keys by content _id or by index position (submission.contentIds).
          const setObj = { tags: combined };
-         if (seoData && seoData.perContentTitles && seoData.perContentTitles[cid]) {
-           const providedTitle = String(seoData.perContentTitles[cid]).trim();
-           if (providedTitle.length > 0) {
-             setObj.title = providedTitle;
+         const perContentUpdates = seoData && (seoData.perContentUpdates || seoData.perContent) ? (seoData.perContentUpdates || seoData.perContent) : null;
+         if (perContentUpdates) {
+           let updatesForThis = null;
+           if (perContentUpdates[cid] !== undefined) updatesForThis = perContentUpdates[cid];
+
+           // fallback by index position
+           if ((updatesForThis === null || updatesForThis === undefined) && submission && Array.isArray(submission.contentIds)) {
+             const pos = submission.contentIds.findIndex(id => String(id) === cid);
+             if (pos >= 0) {
+               if (perContentUpdates[pos] !== undefined) updatesForThis = perContentUpdates[pos];
+               else if (perContentUpdates[String(pos)] !== undefined) updatesForThis = perContentUpdates[String(pos)];
+             }
+           }
+
+           if (updatesForThis !== null && updatesForThis !== undefined) {
+             // Support partial updates: only set provided fields
+             Object.keys(updatesForThis).forEach(key => {
+               if (key !== 'tags') {
+                 setObj[key] = updatesForThis[key];
+               }
+             });
            }
          }
 
          contentBulkOps.push({
            updateOne: {
-             filter: { _id: c._id },
-             update: { $set: setObj }
+             filter: { _id: cid },
+             update: { $set: setObj },
+             upsert: true
            }
          });
        }
 
        if (contentBulkOps.length > 0) {
+         // Execute bulk write for content updates/inserts
          await Content.bulkWrite(contentBulkOps, { session });
-         console.log('publishWithSEO: content tags bulkWrite executed for submission', id, 'ops:', contentBulkOps.length);
        }
 
-      // Persist per-content SEO (primaryKeyword, metaTitle, metaDescription)
-      const perContentMeta = seoData && seoData.perContentMeta ? seoData.perContentMeta : null;
-      const seoBulkOps = [];
-      for (const c of contents) {
-        const cid = String(c._id);
-        const metaFromFront = perContentMeta && perContentMeta[cid] ? perContentMeta[cid] : {};
-        const keywordCandidate = metaFromFront && metaFromFront.primaryKeyword ? metaFromFront.primaryKeyword : null;
-        const keyword = (keywordCandidate && String(keywordCandidate).trim()) ? String(keywordCandidate).trim() : ((c.seo && c.seo.keyword) ? c.seo.keyword : (c.title || ''));
-        const metaTitle = (metaFromFront && metaFromFront.metaTitle && String(metaFromFront.metaTitle).trim()) ? String(metaFromFront.metaTitle).trim() : ((c.seo && c.seo.metaTitle) ? c.seo.metaTitle : (c.title || ''));
-        const metaDescription = (metaFromFront && metaFromFront.metaDescription && String(metaFromFront.metaDescription).trim()) ? String(metaFromFront.metaDescription).trim() : ((c.seo && c.seo.metaDescription) ? c.seo.metaDescription : (c.title || ''));
-
-        seoBulkOps.push({
-          updateOne: {
-            filter: { _id: c._id },
-            update: { $set: { 'seo.keyword': keyword, 'seo.metaTitle': metaTitle, 'seo.metaDescription': metaDescription } }
-          }
-        });
-      }
-
-      if (seoBulkOps.length > 0) {
-        await Content.bulkWrite(seoBulkOps, { session });
-      }
-
-      // Update submission within transaction
-      const updatedSubmission = await Submission.findByIdAndUpdate(id, updateData, { new: true, session });
+      await Submission.findByIdAndUpdate(id, updateData, { session });
 
       await session.commitTransaction();
-      session.endSession();
-
-      const populated = await Submission.findById(updatedSubmission._id)
-        .populate('userId', 'name username email profileImage');
-
-      return await Submission.populateContentIds(populated);
+      return await Submission.findById(id).populate('userId', 'username');
     } catch (err) {
-      try { await session.abortTransaction(); } catch (e) { /* noop */ }
-      session.endSession();
+      console.error('publishWithSEO error:', err);
       throw err;
-    }
-   }
-
-  static async getBySlug(slug) {
-    // Use model helper to find published submission by slug and populate content/tags
-    const submission = await Submission.findBySlug(slug);
-    if (!submission) {
-      throw new Error('Published submission not found');
-    }
-
-    // Ensure we have a plain object we can safely mutate
-    let populated;
-    try {
-      populated = await Submission.populateContentIds(submission);
-    } catch (err) {
-      console.warn('populateContentIds failed in getBySlug:', err && (err.message || err));
-      populated = submission && submission.toObject ? submission.toObject() : { ...submission };
-    }
-
-    // If contentIds exists but contains ID values (not full content objects), try to load the actual content docs
-    try {
-      const hasContentObjects = Array.isArray(populated.contentIds) && populated.contentIds.length > 0 && typeof populated.contentIds[0] === 'object' && ('body' in populated.contentIds[0] || 'title' in populated.contentIds[0]);
-
-      if (!hasContentObjects) {
-        let foundContents = [];
-
-        // If there is a contentIds array (likely IDs), try to fetch those documents first
-        if (Array.isArray(populated.contentIds) && populated.contentIds.length > 0) {
-          const contentIdStrings = populated.contentIds.map(id => String(id));
-          try {
-            // Prefer a direct collection query to avoid Mongoose type casting issues
-            foundContents = await Submission.db.collection('contents').find({ _id: { $in: contentIdStrings } }).toArray();
-          } catch (e) {
-            console.warn('Direct collection fetch by _id list failed in getBySlug, falling back to mongoose find:', e && (e.message || e));
-            try {
-              // Try a mongoose find that includes both string ids and ObjectId conversions when applicable
-              const queries = [];
-              queries.push({ _id: { $in: contentIdStrings } });
-               const objectIds = contentIdStrings.filter(id => mongoose.Types.ObjectId.isValid(id)).map(id => mongoose.Types.ObjectId(id));
-               if (objectIds.length > 0) {
-                 queries.push({ _id: { $in: objectIds } });
-               }
-               foundContents = await Content.find({ $or: queries }).lean();
-            } catch (e2) {
-              console.warn('Fallback mongoose find by mixed IDs failed in getBySlug:', e2 && (e2.message || e));
-            }
-          }
-
-          // Ensure we preserve the order of contentIds as provided on the submission
-          if (foundContents && foundContents.length > 0) {
-            const byId = new Map(foundContents.map(c => [String(c._id), c]));
-            foundContents = contentIdStrings.map(id => byId.get(String(id))).filter(Boolean);
-          }
-        }
-
-        // IMPORTANT: Do NOT fall back to querying all contents by submissionId when a submission
-        // explicitly provides a contentIds array. Querying by submissionId returns any content
-        // referencing that submission and can include items not present in submission.contentIds.
-        // Only use the submissionId-based fallback when no explicit contentIds are present.
-        if ((!foundContents || foundContents.length === 0) && (!Array.isArray(populated.contentIds) || populated.contentIds.length === 0)) {
-          // If still nothing, try querying by submissionId with multiple type/field fallbacks
-          const orClauses = [
-            { submissionId: populated._id },
-            { submission_id: populated._id },
-            { submission: populated._id }
-          ];
-
-          // If submission._id looks like an ObjectId, include ObjectId variants
-          if (typeof populated._id === 'string' && mongoose.Types.ObjectId.isValid(populated._id)) {
-            try {
-              const oid = mongoose.Types.ObjectId(populated._id);
-              orClauses.push({ submissionId: oid }, { submission_id: oid }, { submission: oid });
-            } catch (convErr) {
-              // ignore conversion errors
-            }
-          }
-
-          try {
-            foundContents = await Content.find({ $or: orClauses }).lean();
-          } catch (e) {
-            console.warn('Fallback Content.find by submissionId failed in getBySlug:', e && (e.message || e));
-          }
-        }
-
-        if (foundContents && foundContents.length > 0) {
-          populated.contentIds = foundContents;
-        }
-      }
-    } catch (e) {
-      console.warn('Error while resolving contents in getBySlug fallback:', e && (e.message || e));
-    }
-
-    // Normalize shape for public reading interface: rename contentIds -> contents
-    if (populated.contentIds) {
-      populated.contents = populated.contentIds;
-      delete populated.contentIds;
-    }
-
-    // Populate tag documents for contents so frontend gets name & slug
-    try {
-      if (Array.isArray(populated.contents)) {
-        const allTagIds = new Set();
-        populated.contents.forEach(c => {
-          if (Array.isArray(c.tags)) c.tags.forEach(t => { if (t) allTagIds.add(String(t)); });
-        });
-
-        let tagDocs = [];
-        if (allTagIds.size > 0) {
-          const tagIds = Array.from(allTagIds);
-          try {
-            tagDocs = await Tag.find({ _id: { $in: tagIds } }).select('_id name slug').lean();
-          } catch (e) {
-            // non-fatal - we'll synthesize tag objects below
-            console.warn('Warning: failed to load Tag docs:', e && (e.message || e));
-          }
-        }
-
-        // Helper to create a safe slug when missing
-        const makeSlug = (s) => {
-          if (!s) return '';
-          return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]/g, '');
-        };
-
-        const tagMap = new Map(tagDocs.map(t => [String(t._id), { _id: String(t._id), name: t.name || '', slug: t.slug || makeSlug(t.name || t._id) }]));
-
-        // Replace each content's tags with a stable object: { _id|null, name, slug }
-        populated.contents = populated.contents.map(c => {
-          const mappedTags = Array.isArray(c.tags)
-            ? c.tags.map(raw => {
-                // If tag is an object (may already be a doc), prefer its _id
-                if (raw && typeof raw === 'object') {
-                  const id = raw._id ? String(raw._id) : (raw.id ? String(raw.id) : null);
-                  const name = raw.name || raw.label || raw.tag || (id ? id : '');
-                  if (id && tagMap.has(id)) return tagMap.get(id);
-                  return { _id: id || null, name, slug: raw.slug || makeSlug(name || id) };
-                }
-
-                // Otherwise treat raw as either an id string or a plain name
-                const rawStr = String(raw);
-                if (tagMap.has(rawStr)) return tagMap.get(rawStr);
-
-                // No Tag doc found - treat as display name and synthesize slug
-                return { _id: null, name: rawStr, slug: makeSlug(rawStr) };
-              }).filter(Boolean)
-            : [];
-
-          return { ...c, tags: mappedTags };
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to populate tag docs in getBySlug:', err && (err.message || err));
-    }
-
-    // Ensure content tags are objects with name and slug for frontend
-    // (This normalization is idempotent given the mapping above)
-    if (Array.isArray(populated.contents)) {
-      populated.contents = populated.contents.map(c => {
-        const tagObjs = Array.isArray(c.tags)
-          ? c.tags.map(t => ({ _id: t && t._id ? t._id : null, name: t && t.name ? t.name : (t && t.slug ? t.slug.replace(/-/g, ' ') : ''), slug: t && t.slug ? t.slug : (t && t.name ? String(t.name).trim().toLowerCase().replace(/\s+/g, '-') : '') })).filter(Boolean)
-          : [];
-        return {
-          ...c,
-          tags: tagObjs
-        };
-      });
-    }
-
-    // Also expose top-level submission.tags as array of tag objects ({ _id, name, slug }) so frontend doesn't need to resolve names
-    if (Array.isArray(populated.tags)) {
-      const makeSlug = (s) => {
-        if (!s) return '';
-        return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]/g, '');
-      };
-
-      populated.tags = populated.tags.map(t => {
-        if (!t) return null;
-        if (typeof t === 'string') {
-          return { _id: null, name: t, slug: makeSlug(t) };
-        }
-        if (typeof t === 'object') {
-          const name = t.name || t.tag || t.label || '';
-          const id = t._id || t.id || null;
-          return { _id: id, name: name || (id ? id : ''), slug: t.slug || makeSlug(name || id) };
-        }
-        return null;
-      }).filter(Boolean);
-    }
-
-    return populated;
-  }
-
-  // Helper: ensure tags on submission and contents are objects with _id, name, slug
-  static async _ensureTagObjects(populatedSubmission) {
-    if (!populatedSubmission) return;
-
-    const makeSlug = (s) => {
-      if (!s) return '';
-      return String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    };
-
-    // Normalize contents array
-    const contents = Array.isArray(populatedSubmission.contents) ? populatedSubmission.contents : (Array.isArray(populatedSubmission.contentIds) ? populatedSubmission.contentIds : []);
-
-    // Collect candidate tag ids (strings) to resolve from Tag collection
-    const candidateIds = new Set();
-    contents.forEach(c => {
-      if (Array.isArray(c.tags)) {
-        c.tags.forEach(t => {
-          if (!t) return;
-          if (typeof t === 'string') candidateIds.add(String(t));
-          else if (t && typeof t === 'object' && (t._id || t.id)) candidateIds.add(String(t._id || t.id));
-        });
-      }
-    });
-
-    let tagDocs = [];
-    if (candidateIds.size > 0) {
-      try {
-        tagDocs = await Tag.find({ _id: { $in: Array.from(candidateIds) } }).select('_id name slug').lean();
-      } catch (err) {
-        console.warn('Failed to resolve Tag docs in _ensureTagObjects:', err && (err.message || err));
-        tagDocs = [];
-      }
-    }
-
-    const tagMap = new Map(tagDocs.map(t => [String(t._id), { _id: String(t._id), name: t.name || '', slug: t.slug || makeSlug(t.name || t._id) }]));
-
-    // Replace each content's tags with stable objects
-    populatedSubmission.contents = contents.map(c => {
-      const mapped = Array.isArray(c.tags) ? c.tags.map(raw => {
-        if (!raw) return null;
-        if (typeof raw === 'object') {
-          const id = raw._id ? String(raw._id) : (raw.id ? String(raw.id) : null);
-          const name = raw.name || raw.label || raw.tag || (id ? id : '');
-          if (id && tagMap.has(id)) return tagMap.get(id);
-          return { _id: id || null, name, slug: raw.slug || makeSlug(name || id) };
-        }
-        // raw is string
-        const rawStr = String(raw);
-        if (tagMap.has(rawStr)) return tagMap.get(rawStr);
-        return { _id: null, name: rawStr, slug: makeSlug(rawStr) };
-      }).filter(Boolean) : [];
-
-      return { ...c, tags: mapped };
-    });
-
-    // Normalize top-level submission.tags to objects
-    if (Array.isArray(populatedSubmission.tags)) {
-      populatedSubmission.tags = populatedSubmission.tags.map(t => {
-        if (!t) return null;
-        if (typeof t === 'string') return { _id: null, name: t, slug: makeSlug(t) };
-        if (typeof t === 'object') {
-          const id = t._id || t.id || null;
-          const name = t.name || t.tag || t.label || (id ? id : '');
-          return { _id: id, name, slug: t.slug || makeSlug(name || id) };
-        }
-        return null;
-      }).filter(Boolean);
+    } finally {
+      session.endSession();
     }
   }
 }
