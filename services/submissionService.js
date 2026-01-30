@@ -244,6 +244,144 @@ class SubmissionService {
     return populatedSubmission;
   }
 
+  // Resolve tags (ids, names or partial objects) to full Tag objects ({ _id, name, slug })
+  static async _ensureTagObjects(populatedSubmission) {
+    try {
+      if (!populatedSubmission) return;
+
+      const TagModel = Tag; // required at top
+      const contents = populatedSubmission.contents || populatedSubmission.contentIds || [];
+
+      // Collect ids and slugs to query in batch
+      const idSet = new Set();
+      const slugSet = new Set();
+      const nameToSlug = (name) => {
+        if (!name || typeof name !== 'string') return '';
+        return (tagService && typeof tagService.generateSlug === 'function')
+          ? tagService.generateSlug(tagService.normalizeName(name))
+          : String(name).toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+      };
+
+      // Map to remember original raw tags per content index for reconciling later
+      const contentRawTags = [];
+
+      contents.forEach((c, idx) => {
+        const raw = Array.isArray(c.tags) ? c.tags.slice() : [];
+        contentRawTags[idx] = raw;
+        raw.forEach(t => {
+          if (!t && t !== 0) return;
+          if (typeof t === 'object') {
+            // If object with _id, prefer that for lookup
+            if (t._id) idSet.add(String(t._id));
+            else if (t.slug) slugSet.add(String(t.slug));
+            else if (t.name) slugSet.add(nameToSlug(t.name));
+          } else if (typeof t === 'string') {
+            const s = t.trim();
+            if (/^[0-9a-fA-F]{24}$/.test(s) || /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(s)) {
+              idSet.add(s);
+            } else {
+              const slug = nameToSlug(s);
+              if (slug) slugSet.add(slug);
+            }
+          }
+        });
+      });
+
+      const ids = Array.from(idSet);
+      const slugs = Array.from(slugSet);
+
+      // Query tags by id and slug
+      const query = [];
+      if (ids.length > 0) query.push({ _id: { $in: ids } });
+      if (slugs.length > 0) query.push({ slug: { $in: slugs } });
+
+      let foundTags = [];
+      if (query.length > 0) {
+        foundTags = await TagModel.find({ $or: query }).lean();
+      }
+
+      const tagById = new Map();
+      const tagBySlug = new Map();
+      foundTags.forEach(t => {
+        if (t._id) tagById.set(String(t._id), { _id: String(t._id), name: t.name, slug: t.slug });
+        if (t.slug) tagBySlug.set(String(t.slug), { _id: String(t._id), name: t.name, slug: t.slug });
+      });
+
+      // Reconcile per-content tags
+      contents.forEach((c, idx) => {
+        const raw = contentRawTags[idx] || [];
+        const resolved = [];
+
+        raw.forEach(t => {
+          if (!t && t !== 0) return;
+          if (typeof t === 'object') {
+            if (t._id && tagById.has(String(t._id))) {
+              resolved.push(tagById.get(String(t._id)));
+            } else if (t.slug && tagBySlug.has(String(t.slug))) {
+              resolved.push(tagBySlug.get(String(t.slug)));
+            } else if (t.name) {
+              const slug = nameToSlug(t.name);
+              if (tagBySlug.has(slug)) resolved.push(tagBySlug.get(slug));
+            } else if (t._id) {
+              // keep minimal object
+              resolved.push({ _id: String(t._id), name: t.name || '', slug: t.slug || '' });
+            }
+          } else if (typeof t === 'string') {
+            const s = t.trim();
+            if (/^[0-9a-fA-F]{24}$/.test(s) || /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(s)) {
+              if (tagById.has(s)) resolved.push(tagById.get(s));
+            } else {
+              const slug = nameToSlug(s);
+              if (tagBySlug.has(slug)) resolved.push(tagBySlug.get(slug));
+            }
+          }
+        });
+
+        // Deduplicate
+        const seen = new Set();
+        const uniq = [];
+        resolved.forEach(r => {
+          const key = r && r._id ? r._id : JSON.stringify(r);
+          if (!seen.has(key)) {
+            seen.add(key);
+            uniq.push(r);
+          }
+        });
+
+        // Replace the content's tags with resolved objects (keep original shape if none found)
+        if (uniq.length > 0) {
+          c.tags = uniq;
+        } else {
+          // If nothing resolved, normalize to empty array to avoid mixed types
+          c.tags = [];
+        }
+      });
+
+      // If submission-level tags exist (legacy), attempt same resolution
+      if (Array.isArray(populatedSubmission.tags) && populatedSubmission.tags.length > 0) {
+        const raw = populatedSubmission.tags.slice();
+        const resolved = [];
+        raw.forEach(t => {
+          if (!t) return;
+          if (typeof t === 'object' && t._id && tagById.has(String(t._id))) resolved.push(tagById.get(String(t._id)));
+          else if (typeof t === 'object' && t.slug && tagBySlug.has(String(t.slug))) resolved.push(tagBySlug.get(String(t.slug)));
+          else if (typeof t === 'string') {
+            if (tagById.has(t)) resolved.push(tagById.get(t));
+            else {
+              const slug = nameToSlug(t);
+              if (tagBySlug.has(slug)) resolved.push(tagBySlug.get(slug));
+            }
+          }
+        });
+        populatedSubmission.tags = resolved;
+      }
+
+    } catch (err) {
+      // Fail silently - reading a submission should not error because tags couldn't be resolved
+      console.warn('SubmissionService._ensureTagObjects failed:', err && (err.message || err));
+    }
+  }
+
   static async getPublishedSubmissionDetails(id) {
     const submission = await Submission.findOne({ 
       _id: id, 
