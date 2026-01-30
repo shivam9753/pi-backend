@@ -941,12 +941,12 @@ router.get('/user/me', authenticateUser, async (req, res) => {
     if (!req.user?.userId) {
       return res.status(400).json({ message: 'User not authenticated' });
     }
-    
+
     // Add deprecation headers to inform frontend
     res.set('X-API-Deprecated', 'true');
     res.set('X-API-Replacement', '/api/submissions/explore?user=me');
     res.set('X-API-Alternative', '/api/users/profile (for user data + stats)');
-    
+
     const submissions = await SubmissionService.getUserSubmissions(req.user.userId);
     res.json({ submissions });
   } catch (error) {
@@ -955,6 +955,42 @@ router.get('/user/me', authenticateUser, async (req, res) => {
   }
 });
 
+// New: GET /api/submissions/drafts/my - return the authenticated user's draft submissions
+router.get('/drafts/my', authenticateUser, validatePagination, async (req, res) => {
+  try {
+    if (!req.user?.userId) return res.status(400).json({ message: 'User not authenticated' });
+
+    const limit = Number.parseInt(req.query.limit || '20', 10);
+    const skip = Number.parseInt(req.query.skip || '0', 10);
+
+    const query = { userId: req.user.userId, status: SUBMISSION_STATUS.DRAFT };
+
+    const submissions = await Submission.find(query)
+      .select('title excerpt submissionType imageUrl createdAt updatedAt readingTime status seo')
+      .populate('userId', 'name username profileImage')
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .skip(skip)
+      .lean();
+
+    const total = await Submission.countDocuments(query);
+
+    res.json({
+      submissions,
+      total,
+      pagination: {
+        limit,
+        skip,
+        hasMore: (skip + submissions.length) < total,
+        currentPage: Math.floor(skip / limit) + 1,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error in /drafts/my:', error);
+    res.status(500).json({ message: 'Error fetching drafts', error: error.message });
+  }
+});
 
 // GET /api/submissions/user/:userId - Get user's submissions
 router.get('/user/:userId', validateObjectId('userId'), validatePagination, async (req, res) => {
