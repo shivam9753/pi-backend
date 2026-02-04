@@ -1398,4 +1398,63 @@ router.delete('/:id', authenticateUser, requireAdmin, validateObjectId('id'), as
   }
 });
 
+// PUT /api/submissions/:id/resubmit - Resubmit a submission after making revisions (owner or admin)
+router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSubmissionUpdate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const submission = await Submission.findById(id);
+    if (!submission) {
+      return res.status(404).json({ success: false, message: 'Submission not found' });
+    }
+
+    // Only the owner or an admin may resubmit
+    const isOwner = submission.userId && String(submission.userId) === String(req.user._id);
+    const isAdmin = req.user && req.user.role === 'admin';
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    // Sanitize contents if present (same structure used by create endpoint)
+    if (Array.isArray(req.body.contents)) {
+      req.body.contents = req.body.contents.map(c => ({
+        title: c.title,
+        body: c.body,
+        type: c.type,
+        footnotes: c.footnotes || '',
+        seo: c.seo || {}
+      }));
+    }
+
+    // Whitelist updatable fields for resubmission
+    const updatable = ['title', 'description', 'excerpt', 'contents', 'submissionType', 'seo', 'imageUrl', 'readingTime', 'revisionNotes'];
+    updatable.forEach(field => {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        submission[field] = req.body[field];
+      }
+    });
+
+    // Use model method to set status and record history properly
+    try {
+      await submission.changeStatus('resubmitted', String(req.user._id), req.body.revisionNotes || 'Resubmitted by author');
+    } catch (statusErr) {
+      // If changeStatus fails (invalid transition), still attempt to save updated fields and return error
+      console.error('Error changing status to resubmitted:', statusErr);
+      return res.status(400).json({ success: false, message: statusErr.message || 'Invalid status transition' });
+    }
+
+    // Ensure any other changes are persisted (changeStatus performs a save but call save again to be safe)
+    await submission.save();
+
+    // Return the updated submission (lean/populate as needed by clients)
+    const populated = await Submission.findById(id)
+      .populate('userId', 'name username email profileImage')
+      .lean();
+
+    return res.json({ success: true, message: 'Submission resubmitted', submission: populated });
+  } catch (error) {
+    console.error('Error in resubmit route:', error);
+    return res.status(500).json({ success: false, message: 'Error resubmitting submission', error: error.message });
+  }
+});
+
 module.exports = router;
