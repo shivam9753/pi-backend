@@ -15,14 +15,6 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     trim: true
   },
-  username: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true,
-    minlength: 2,
-    maxlength: 50
-  },
   name: {
     type: String,
     required: false,
@@ -49,6 +41,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  socialLinks: {
+    twitter: { type: String, default: '' },
+    instagram: { type: String, default: '' },
+    facebook: { type: String, default: '' }
+  },
   isFeatured: {
     type: Boolean,
     default: false
@@ -63,53 +60,45 @@ const userSchema = new mongoose.Schema({
     default: 50,
     min: 0,
     max: 100
-  },
+  }
 }, {
   timestamps: true,
   versionKey: false,
   _id: false // Disable automatic _id since we're defining our own string UUID _id
 });
 
-// Indexes are automatically created by unique: true in schema
-// userSchema.index({ email: 1 }); // Removed - handled by unique: true
-// userSchema.index({ username: 1 }); // Removed - handled by unique: true
-
 // Methods
 userSchema.methods.toPublicJSON = function() {
   return {
     _id: this._id,
     email: this.email,
-    username: this.username,
     name: this.name,
     role: this.role,
     bio: this.bio,
     profileImage: this.profileImage,
+    socialLinks: this.socialLinks,
     isFeatured: this.isFeatured,
-    featuredAt: this.featuredAt
+    featuredAt: this.featuredAt,
+    ats: this.ats,
+    createdAt: this.createdAt,
+    updatedAt: this.updatedAt
   };
 };
 
 userSchema.methods.toAuthJSON = function() {
+  // Auth JSON should avoid exposing password
   return {
     _id: this._id,
     email: this.email,
-    username: this.username,
     name: this.name,
     role: this.role,
-    bio: this.bio,
-    profileImage: this.profileImage,
-    isFeatured: this.isFeatured,
-    featuredAt: this.featuredAt
+    profileImage: this.profileImage
   };
 };
 
 // Static methods
 userSchema.statics.findByEmail = function(email) {
   return this.findOne({ email });
-};
-
-userSchema.statics.findByUsername = function(username) {
-  return this.findOne({ username });
 };
 
 module.exports = mongoose.model('User', userSchema);

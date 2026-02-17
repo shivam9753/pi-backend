@@ -28,7 +28,7 @@ const router = express.Router();
 // Use memory storage for multer since we'll handle storage through ImageService
 const upload = multer({ 
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB limit
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3MB limit (allow small multipart overhead over 2MB compressed images)
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
@@ -44,9 +44,31 @@ router.post('/:id/upload-image',
     // Use multer to handle file upload and surface friendly errors
     upload.single('image')(req, res, (err) => {
       if (err) {
+        // Log extra debugging information to help diagnose size-related failures
         console.error('Submission image upload error (multer):', err);
+        try {
+          console.error('Multer error code:', err.code);
+          console.error('Request content-length header:', req.headers && req.headers['content-length']);
+        } catch (e) {
+          console.error('Failed to read request headers for upload error:', e && e.message);
+        }
         return res.status(400).json({ success: false, message: 'File upload error: ' + err.message });
       }
+
+      // Log received file size and content-length for debugging (helps diagnose proxy/nginx limits)
+      try {
+        if (req.file) {
+          console.log('Submission upload received file:', {
+            originalName: req.file.originalname,
+            fieldName: req.file.fieldname,
+            sizeBytes: req.file.size
+          });
+        }
+        console.log('Submission upload request content-length header:', req.headers && req.headers['content-length']);
+      } catch (e) {
+        console.warn('Failed to log upload debug info:', e && e.message);
+      }
+
       next();
     });
   },
