@@ -59,6 +59,7 @@ const purgeRoutes = require('./routes/purgeRoutes');
 const contentRoutes = require('./routes/contentRoutes');
 const tagRoutes = require('./routes/tagRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
+const publicRoutes = require('./routes/publicRoutes');
 // const writingProgramRoutes = require('./routes/writingProgramRoutes'); // DEPRECATED - writing program routes unregistered
 // const poetryAnalysis = require('./routes/poetry-analysis'); // DEPRECATED - moved to submissionRoutes
 
@@ -217,6 +218,7 @@ if (typeof uploadLimiter === 'function') {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/public', publicRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/submissions', submissionRoutes);

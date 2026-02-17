@@ -2,32 +2,30 @@ const bcrypt = require('bcrypt');
 const User = require('../models/User');
 const { generateToken } = require('../middleware/auth');
 const { SUBMISSION_STATUS } = require('../constants/status.constants');
+const passwordService = require('./passwordService');
 
 class UserService {
   static async registerUser(userData) {
-    const { email, name, username, password, bio, socialLinks } = userData;
+    const { email, name, password, bio, socialLinks, role } = userData;
 
-    // Check if user already exists
-    const existingUser = await User.findOne({
-      $or: [{ email }, { username }]
-    });
+    // Check if user already exists (email is the unique identifier now)
+    const existingUser = await User.findOne({ email });
 
     if (existingUser) {
-      const field = existingUser.email === email ? 'email' : 'username';
-      throw new Error(`User with this ${field} already exists`);
+      throw new Error('User with this email already exists');
     }
 
     // Hash password
-    const saltRounds = 12;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const hashedPassword = await passwordService.hashPassword(password);
 
     // Create user
     const user = new User({
       email,
       name: name || '',
-      username,
       password: hashedPassword,
       bio: bio || '',
+      socialLinks: socialLinks || {},
+      role: role || 'user'
     });
 
     await user.save();
@@ -49,7 +47,7 @@ class UserService {
     }
 
     // Check password
-    const isValidPassword = await bcrypt.compare(password, user.password);
+    const isValidPassword = await passwordService.comparePassword(password, user.password);
     if (!isValidPassword) {
       throw new Error('Invalid credentials');
     }
@@ -68,101 +66,33 @@ class UserService {
     if (!user) {
       throw new Error('User not found');
     }
-
-    // Get user stats from submissions
-    const Submission = require('../models/Submission');
-    
-    // Get counts by status
-    const [
-      totalSubmissions, 
-      publishedSubmissions, 
-      pendingSubmissions, 
-      needsRevisionSubmissions,
-      draftSubmissions,
-      acceptedSubmissions,
-      rejectedSubmissions
-    ] = await Promise.all([
-      Submission.countDocuments({ userId }),
-      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.PUBLISHED }),
-      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.PENDING_REVIEW, SUBMISSION_STATUS.IN_PROGRESS, SUBMISSION_STATUS.SHORTLISTED, SUBMISSION_STATUS.SUBMITTED, SUBMISSION_STATUS.RESUBMITTED] } }),
-      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.NEEDS_REVISION, SUBMISSION_STATUS.NEEDS_CHANGES] } }),
-      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.DRAFT }),
-      Submission.countDocuments({ userId, status: { $in: [SUBMISSION_STATUS.ACCEPTED, SUBMISSION_STATUS.APPROVED] } }),
-      Submission.countDocuments({ userId, status: SUBMISSION_STATUS.REJECTED })
-    ]);
-
-    // Get counts by submission type
-    const submissionTypeCounts = await Submission.aggregate([
-      { $match: { userId: userId } },
-      { $group: { _id: '$submissionType', count: { $sum: 1 } } }
-    ]);
-
-    const userProfile = user.toPublicJSON();
-    userProfile.submissionStats = {
-      total: totalSubmissions,
-      published: publishedSubmissions,
-      pending: pendingSubmissions,
-      needsRevision: needsRevisionSubmissions,
-      draft: draftSubmissions,
-      accepted: acceptedSubmissions,
-      rejected: rejectedSubmissions,
-      byType: submissionTypeCounts.reduce((acc, item) => {
-        acc[item._id] = item.count;
-        return acc;
-      }, {
-        poem: 0,
-        prose: 0, 
-        article: 0,
-        opinion: 0
-      })
-    };
-
-    return userProfile;
+    return user.toPublicJSON();
   }
 
   static async updateUserProfile(userId, updateData) {
-    console.log('🔄 UserService.updateUserProfile called with:', { userId, updateData });
-    
     const user = await User.findById(userId);
     if (!user) {
       throw new Error('User not found');
     }
-
-    console.log('👤 Current user data:', {
+    console.log('Current user data:', {
       name: user.name,
       bio: user.bio,
       profileImage: user.profileImage
     });
-
-    // Update allowed fields
-    const allowedFields = ['name', 'username', 'bio', 'profileImage', 'socialLinks', 'preferences'];
+    const allowedFields = new Set(['name', 'bio', 'profileImage', 'socialLinks']);
     const updates = {};
-
     Object.keys(updateData).forEach(key => {
-      if (allowedFields.includes(key)) {
+      if (allowedFields.has(key)) {
         updates[key] = updateData[key];
       }
     });
-    
-    console.log('✅ Filtered updates to apply:', updates);
-
-    // Check if username is being updated and is unique
-    if (updates.username && updates.username !== user.username) {
-      const existingUser = await User.findByUsername(updates.username);
-      if (existingUser) {
-        throw new Error('Username already taken');
-      }
-    }
-
     Object.assign(user, updates);
-    await user.save();
-    
+    await user.save(); 
     console.log('💾 User saved successfully:', {
       name: user.name,
       bio: user.bio,
       profileImage: user.profileImage
     });
-
     return user.toPublicJSON();
   }
 
@@ -171,17 +101,12 @@ class UserService {
     if (!user) {
       throw new Error('User not found');
     }
-
-    // Verify current password
-    const isValidPassword = await bcrypt.compare(currentPassword, user.password);
+    const isValidPassword = await passwordService.comparePassword(currentPassword, user.password);
     if (!isValidPassword) {
       throw new Error('Current password is incorrect');
     }
 
-    // Hash new password
-    const saltRounds = 12;
-    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
-
+    const hashedPassword = await passwordService.hashPassword(newPassword);
     user.password = hashedPassword;
     await user.save();
 
@@ -204,8 +129,8 @@ class UserService {
     
     const submissions = await Submission.find(query)
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip));
+      .limit(Number.parseInt(limit))
+      .skip(Number.parseInt(skip));
 
     // Manually populate contentIds for each submission
     const populatedSubmissions = await Promise.all(
@@ -224,15 +149,14 @@ class UserService {
       $or: [
         { name: { $regex: searchQuery, $options: 'i' } },
         { email: { $regex: searchQuery, $options: 'i' } },
-        { username: { $regex: searchQuery, $options: 'i' } },
         { bio: { $regex: searchQuery, $options: 'i' } }
       ]
     };
 
     const users = await User.find(query, { password: 0 })
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip));
+      .limit(Number.parseInt(limit))
+      .skip(Number.parseInt(skip));
 
     return users;
   }
@@ -245,8 +169,8 @@ class UserService {
     
     const users = await User.find(query, { password: 0 })
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip));
+      .limit(Number.parseInt(limit))
+      .skip(Number.parseInt(skip));
 
     const total = await User.countDocuments(query);
 
@@ -272,9 +196,9 @@ class UserService {
       total,
       stats,
       pagination: {
-        limit: parseInt(limit),
-        skip: parseInt(skip),
-        hasMore: (parseInt(skip) + parseInt(limit)) < total
+        limit: Number.parseInt(limit),
+        skip: Number.parseInt(skip),
+        hasMore: (Number.parseInt(skip) + Number.parseInt(limit)) < total
       }
     };
   }
@@ -486,11 +410,10 @@ class UserService {
           }
         },
 
-        // Project only required fields
+        // Project only required fields (removed username)
         {
           $project: {
             _id: 1,
-            username: 1,
             name: 1,
             email: 1,
             bio: 1,
@@ -498,136 +421,109 @@ class UserService {
             profileImage: 1,
             isFeatured: 1,
             featuredAt: 1,
-            createdAt: 1,
-            publishedSubmissions: 1
+            createdAt: 1
           }
         },
-
-        // Sort
         { $sort: sortObj },
-
-        // Pagination
-        { $skip: parseInt(skip) },
-        { $limit: parseInt(limit) }
+        { $skip: Number.parseInt(skip) },
+        { $limit: Number.parseInt(limit) }
       ];
-
       const users = await User.aggregate(pipeline);
-
-      // Get total count of featured users
       const totalCount = await User.countDocuments({ isFeatured: true });
 
       return {
         users,
         pagination: {
           total: totalCount,
-          limit: parseInt(limit),
-          skip: parseInt(skip),
-          hasNext: (parseInt(skip) + parseInt(limit)) < totalCount,
-          hasPrev: parseInt(skip) > 0
-        }
-      };
-    } catch (error) {
-      console.error('Error fetching featured users:', error);
-      throw new Error('Failed to fetch featured users');
-    }
-  }
-
-  // New: Get users who have at least one published submission
-  static async getUsersWithPublished(options = {}) {
-    const { limit = 20, skip = 0, sortBy = 'name', order = 'desc' } = options;
-    const Submission = require('../models/Submission');
-
-    const sortOrder = order === 'asc' ? 1 : -1;
-
-    try {
-      // Aggregate published submissions grouped by userId
-      const pipeline = [
-        { $match: { status: SUBMISSION_STATUS.PUBLISHED } },
-        { $group: { _id: '$userId', publishedCount: { $sum: 1 } } },
-
-        // Join with users collection
-        {
-          $lookup: {
-            from: 'users',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'user'
-          }
-        },
-        { $unwind: '$user' },
-
-        // Project minimal fields: id, name, profileImage, published count
-        {
-          $project: {
-            _id: '$user._id',
-            name: { $ifNull: ['$user.name', '$user.username'] },
-            profileImage: '$user.profileImage',
-            publishedSubmissions: '$publishedCount'
-          }
-        },
-
-        // Sorting
-        { $sort: { [sortBy]: sortOrder } },
-
-        // Pagination
-        { $skip: Number.parseInt(skip) },
-        { $limit: Number.parseInt(limit) }
-      ];
-
-      const users = await Submission.aggregate(pipeline);
-
-      // Get total number of distinct users who have published submissions
-      const totalAgg = await Submission.aggregate([
-        { $match: { status: SUBMISSION_STATUS.PUBLISHED } },
-        { $group: { _id: '$userId' } },
-        { $count: 'total' }
-      ]);
-
-      const total = (totalAgg[0] && totalAgg[0].total) || 0;
-
-      return {
-        users,
-        total,
-        pagination: {
-          total,
           limit: Number.parseInt(limit),
           skip: Number.parseInt(skip),
-          hasNext: (Number.parseInt(skip) + Number.parseInt(limit)) < total,
+          hasNext: (Number.parseInt(skip) + Number.parseInt(limit)) < totalCount,
           hasPrev: Number.parseInt(skip) > 0
-        }
-      };
-    } catch (error) {
-      console.error('Error fetching users with published submissions:', error);
-      throw new Error('Failed to fetch users with published submissions');
-    }
-  }
+         }
+       };
+     } catch (error) {
+       console.error('Error fetching featured users:', error);
+       throw new Error('Failed to fetch featured users');
+     }
+   }
 
-  static async markUserAsFeaturedByContent(userId) {
-    try {
-      const user = await User.findById(userId);
-      if (!user) {
-        return null; // User not found, but don't throw error for background operation
-      }
+   static async getUsersWithPublished(options = {}) {
+     const { limit = 20, skip = 0, sortBy = 'name', order = 'desc' } = options;
+     const Submission = require('../models/Submission');
+     const sortOrder = order === 'asc' ? 1 : -1;
+     try {
+       const pipeline = [
+         { $match: { status: SUBMISSION_STATUS.PUBLISHED } },
+         { $group: { _id: '$userId', publishedCount: { $sum: 1 } } },
+         {
+           $lookup: {
+             from: 'users',
+             localField: '_id',
+             foreignField: '_id',
+             as: 'user'
+           }
+         },
+         { $unwind: '$user' },
+         {
+           $project: {
+             _id: '$user._id',
+             name: '$user.name',
+             profileImage: '$user.profileImage',
+             publishedSubmissions: '$publishedCount'
+           }
+         },
+         { $sort: { [sortBy]: sortOrder } },
+         { $skip: Number.parseInt(skip) },
+         { $limit: Number.parseInt(limit) }
+       ];
+       const users = await Submission.aggregate(pipeline);
+       const totalAgg = await Submission.aggregate([
+         { $match: { status: SUBMISSION_STATUS.PUBLISHED } },
+         { $group: { _id: '$userId' } },
+         { $count: 'total' }
+       ]);
 
-      if (user.isFeatured) {
-        return user; // Already featured
-      }
+       const total = (totalAgg[0] && totalAgg[0].total) || 0;
+       return {
+         users,
+         total,
+         pagination: {
+           total,
+           limit: Number.parseInt(limit),
+           skip: Number.parseInt(skip),
+           hasNext: (Number.parseInt(skip) + Number.parseInt(limit)) < total,
+           hasPrev: Number.parseInt(skip) > 0
+         }
+       };
+     } catch (error) {
+       console.error('Error fetching users with published submissions:', error);
+       throw new Error('Failed to fetch users with published submissions');
+     }
+   }
 
-      const updatedUser = await User.findByIdAndUpdate(
-        userId,
-        {
-          isFeatured: true,
-          featuredAt: new Date()
-        },
-        { new: true }
-      );
-
-      return updatedUser;
-    } catch (error) {
-      console.error('Error marking user as featured by content:', error);
-      return null; // Don't throw error for background operation
-    }
-  }
+   static async markUserAsFeaturedByContent(userId) {
+     try {
+       const user = await User.findById(userId);
+       if (!user) {
+         return null;
+       }
+       if (user.isFeatured) {
+         return user;
+       }
+       const updatedUser = await User.findByIdAndUpdate(
+         userId,
+         {
+           isFeatured: true,
+           featuredAt: new Date()
+         },
+         { new: true }
+       );
+       return updatedUser;
+     } catch (error) {
+       console.error('Error marking user as featured by content:', error);
+       return null; // Don't throw error for background operation
+     }
+   }
 }
 
 module.exports = UserService;

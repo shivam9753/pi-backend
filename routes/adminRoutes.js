@@ -34,70 +34,48 @@ const adminOnly = (req, res, next) => {
 router.use(authenticateUser);
 router.use(adminOnly);
 
-// Create new user
+// Create new user (migrated to use UserService, no username, no temp password in response)
 router.post('/users', async (req, res) => {
   try {
-    const { name, username, email, bio, role } = req.body;
+    const { name, email, bio = '', role = 'user', socialLinks } = req.body;
 
-    // Validate input
-    if (!name || !username || !email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Name, username, and email are required' 
-      });
+    if (!name || !email) {
+      return res.status(400).json({ success: false, message: 'Name and email are required' });
     }
 
-    // Validate role if provided
     const validRoles = ['user', 'writer', 'reviewer', 'admin'];
-    const userRole = role && validRoles.includes(role) ? role : 'user';
+    const userRole = validRoles.includes(role) ? role : 'user';
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ 
-      $or: [{ email }, { username }] 
+    // Generate a temporary password to send via email (not returned in API)
+    const tempPassword = Math.random().toString(36).slice(-8);
+
+    // Delegate to UserService for creation and token generation
+    const result = await require('../services/userService').registerUser({
+      email,
+      name,
+      password: tempPassword,
+      bio,
+      socialLinks,
+      role: userRole
     });
 
-    if (existingUser) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'User with this email or username already exists' 
-      });
+    // Attempt to send welcome email (best-effort)
+    try {
+      if (emailService && typeof emailService.sendWelcomeEmail === 'function') {
+        await emailService.sendWelcomeEmail(result.user, tempPassword);
+      }
+    } catch (error_) {
+      console.warn('Failed to send welcome email to new user:', error_ && error_.message);
     }
 
-    // Generate temporary password
-    const tempPassword = Math.random().toString(36).slice(-8);
-    const hashedPassword = await bcrypt.hash(tempPassword, 12);
-
-    // Create user
-    const user = new User({
-      name,
-      username,
-      email,
-      bio: bio || '', // Include bio field
-      password: hashedPassword,
-      role: userRole, // Use validated role
-      isEmailVerified: true
-    });
-
-    await user.save();
-
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: 'User created successfully',
-      user: {
-        id: user._id,
-        name: user.name,
-        username: user.username,
-        email: user.email,
-        tempPassword // Send temp password in response (in real app, send via email)
-      }
+      user: result.user.toPublicJSON()
     });
-
   } catch (error) {
     console.error('Create user error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
 
