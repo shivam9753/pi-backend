@@ -114,4 +114,63 @@ router.get('/users/:id/briefprofile', validateObjectId('id'), async (req, res) =
   }
 });
 
+// Public: trending submissions by recent DailyView (returns submissions list)
+router.get('/trending-submissions', async (req, res) => {
+  try {
+    const { limit = 7, skip = 0, windowDays = 7, type } = req.query;
+    const days = Number.parseInt(windowDays, 10) || 7;
+    const limitNum = Math.min(Number.parseInt(limit, 10) || 7, 100);
+    const skipNum = Math.max(Number.parseInt(skip, 10) || 0, 0);
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const DailyView = require('../models/DailyView');
+
+    // Aggregate recent daily view buckets for submissions
+    const baseAgg = [
+      { $match: { targetType: 'submission', updatedAt: { $gte: cutoff } } },
+      { $group: { _id: '$targetId', periodViews: { $sum: '$count' } } },
+      { $lookup: { from: 'submissions', localField: '_id', foreignField: '_id', as: 'submission' } },
+      { $unwind: '$submission' },
+      { $match: { 'submission.status': 'published' } }
+    ];
+
+    if (type && String(type).trim() !== '') {
+      baseAgg.push({ $match: { 'submission.submissionType': String(type) } });
+    }
+
+    // Join author and project final submission shape
+    const finalAgg = baseAgg.concat([
+      { $lookup: { from: 'users', localField: 'submission.userId', foreignField: '_id', as: 'author' } },
+      { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
+      { $project: {
+          _id: '$submission._id',
+          title: '$submission.title',
+          submissionType: '$submission.submissionType',
+          periodViews: 1,
+          viewCount: { $ifNull: ['$submission.viewCount', 0] },
+          publishedAt: '$submission.reviewedAt',
+          seo: '$submission.seo',
+          author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage' }
+      } },
+      { $sort: { periodViews: -1, viewCount: -1 } },
+      { $skip: skipNum },
+      { $limit: limitNum }
+    ]);
+
+    // Build count pipeline (same as baseAgg but count unique submissions)
+    const countAgg = baseAgg.concat([{ $count: 'total' }]);
+
+    const [submissions, countResult] = await Promise.all([
+      DailyView.aggregate(finalAgg),
+      DailyView.aggregate(countAgg)
+    ]);
+
+    const total = (countResult && countResult.length > 0) ? countResult[0].total : 0;
+
+    return res.json({ submissions, total });
+  } catch (error) {
+    console.error('Error fetching trending submissions:', error);
+    return res.status(500).json({ message: 'Error fetching trending submissions', error: error.message });
+  }
+});
+
 module.exports = router;
