@@ -149,6 +149,11 @@ router.get('/trending-submissions', async (req, res) => {
           viewCount: { $ifNull: ['$submission.viewCount', 0] },
           publishedAt: '$submission.reviewedAt',
           seo: '$submission.seo',
+          // include fields needed by the mapper so imageUrl/excerpt/readingTime/createdAt are available
+          imageUrl: '$submission.imageUrl',
+          excerpt: '$submission.excerpt',
+          readingTime: '$submission.readingTime',
+          createdAt: '$submission.createdAt',
           author: { _id: '$author._id', name: '$author.name', username: '$author.username', profileImage: '$author.profileImage' }
       } },
       { $sort: { periodViews: -1, viewCount: -1 } },
