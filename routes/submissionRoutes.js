@@ -912,6 +912,14 @@ router.get('/', validatePagination, async (req, res) => {
       // Analytics logging removed (analytics DB dropped)
     }
     
+    // Ensure canonical response shape (add success and filters)
+    response.success = true;
+    response.filters = {
+      types: ['poem','prose','article','book_review','cinema_essay','opinion'],
+      featured: (featured === 'true')
+    };
+    if (tag) response.filters.tag = tag;
+
     res.json(response);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching submissions', error: error.message });
@@ -1337,7 +1345,29 @@ router.get('/random', async (req, res) => {
     ];
 
     const submissions = await Submission.aggregate(pipeline);
-    return res.json({ success: true, submissions });
+    // Return canonical response for random endpoint
+    const total = Array.isArray(submissions) ? submissions.length : 0;
+    const limitVal = limitNum;
+    const skipVal = 0;
+    const currentPage = 1;
+    const totalPages = 1;
+    const hasMore = false;
+
+    return res.json({
+      success: true,
+      submissions,
+      pagination: {
+        currentPage,
+        totalPages,
+        limit: limitVal,
+        skip: skipVal,
+        hasMore
+      },
+      total,
+      filters: {
+        types: ['poem','prose','article','book_review','cinema_essay','opinion']
+      }
+    });
   } catch (error) {
     console.error('Error fetching random submissions:', error);
     return res.status(500).json({ success: false, message: 'Error fetching random submissions', error: error.message });

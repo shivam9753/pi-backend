@@ -166,7 +166,44 @@ router.get('/trending-submissions', async (req, res) => {
 
     const total = (countResult && countResult.length > 0) ? countResult[0].total : 0;
 
-    return res.json({ submissions, total });
+    // Normalize submission shape to match explore endpoint (/api/submissions/explore)
+    const mapped = (submissions || []).map(s => ({
+      _id: s._id,
+      title: s.title,
+      submissionType: s.submissionType,
+      imageUrl: s.seo?.ogImage || s.imageUrl || '',
+      excerpt: s.excerpt || '',
+      readingTime: s.readingTime || 1,
+      createdAt: s.createdAt || s.publishedAt || null,
+      author: s.author ? { name: s.author.name, username: s.author.username } : null,
+      slug: s.seo?.slug || (s.seo && s.seo.slug) || (s._id || ''),
+      publishedAt: s.publishedAt || null,
+      viewCount: s.viewCount || 0,
+      featured: !!s.featured
+    }));
+
+    const limitVal = limitNum;
+    const skipVal = skipNum;
+    const currentPage = Math.floor(skipVal / limitVal) + 1;
+    const totalPages = limitVal > 0 ? Math.ceil(total / limitVal) : 1;
+    const hasMore = (skipVal + limitVal) < total;
+
+    return res.json({
+      success: true,
+      submissions: mapped,
+      pagination: {
+        currentPage,
+        totalPages,
+        limit: limitVal,
+        skip: skipVal,
+        hasMore
+      },
+      total,
+      filters: {
+        types: ['poem','prose','article','book_review','cinema_essay','opinion'],
+        featured: false
+      }
+    });
   } catch (error) {
     console.error('Error fetching trending submissions:', error);
     return res.status(500).json({ message: 'Error fetching trending submissions', error: error.message });
