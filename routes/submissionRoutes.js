@@ -1392,6 +1392,37 @@ router.post('/:id/publish-with-seo', authenticateUser, requireReviewer, validate
   }
 });
 
+// PATCH /api/submissions/:id/seo - Update SEO configuration for a submission
+router.patch('/:id/seo', authenticateUser, requireReviewer, validateObjectId('id'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const payload = req.body || {};
+
+    const submission = await Submission.findById(id);
+    if (!submission) return res.status(404).json({ success: false, message: 'Submission not found' });
+
+    submission.seo = submission.seo || {};
+
+    // Whitelist allowed SEO fields
+    const allowed = ['slug', 'metaTitle', 'metaDescription', 'primaryKeyword', 'ogImage', 'featuredOnHomepage', 'keywords', 'canonical'];
+    allowed.forEach(field => {
+      if (Object.prototype.hasOwnProperty.call(payload, field)) {
+        // normalize booleans/strings appropriately
+        if (field === 'featuredOnHomepage') submission.seo[field] = !!payload[field];
+        else if (field === 'keywords' && Array.isArray(payload[field])) submission.seo[field] = payload[field];
+        else submission.seo[field] = payload[field];
+      }
+    });
+
+    await submission.save();
+
+    return res.json({ success: true, message: 'SEO configuration updated', submission });
+  } catch (error) {
+    console.error('Error updating SEO configuration:', error);
+    return res.status(500).json({ success: false, message: 'Error updating SEO configuration', error: error.message });
+  }
+});
+
 // PATCH /api/submissions/:id/unpublish - Unpublish a submission (admin only)
 router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
   try {

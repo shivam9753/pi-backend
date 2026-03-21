@@ -989,6 +989,17 @@ class SubmissionService {
     }
 
     // Mark submission as published
+    // Apply any top-level submission fields provided in the payload (title, description, excerpt)
+    // Frontend sends these at the top level when calling publish-with-seo; ensure they're saved.
+    if (seoData && Object.prototype.hasOwnProperty.call(seoData, 'title')) {
+      submission.title = String(seoData.title || submission.title || '').trim();
+    }
+    if (seoData && Object.prototype.hasOwnProperty.call(seoData, 'description')) {
+      submission.description = String(seoData.description || submission.description || '').trim();
+    }
+    if (seoData && Object.prototype.hasOwnProperty.call(seoData, 'excerpt')) {
+      submission.excerpt = String(seoData.excerpt || submission.excerpt || '').trim();
+    }
     submission.status = SUBMISSION_STATUS.PUBLISHED;
     submission.reviewedAt = new Date();
     submission.reviewedBy = publisherId;
