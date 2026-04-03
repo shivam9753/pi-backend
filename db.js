@@ -19,6 +19,16 @@ async function connectDB() {
       const dbName = NODE_ENV === 'production' ? 'poemsindiadb' : 'poemsindiadb-dev';
       db = client.db(dbName);
       console.log(`Connected to MongoDB database: ${dbName}`);
+
+      // Drop stale username index if it still exists from old schema
+      try {
+        await db.collection('users').dropIndex('username_1');
+        console.log('Dropped stale username_1 index from users collection');
+      } catch (e) {
+        if (e.codeName !== 'IndexNotFound') {
+          console.warn('Could not drop username_1 index:', e.message);
+        }
+      }
     }
     return db;
   } catch (error) {

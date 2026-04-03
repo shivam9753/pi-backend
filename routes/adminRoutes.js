@@ -46,8 +46,8 @@ router.post('/users', async (req, res) => {
     const validRoles = ['user', 'writer', 'reviewer', 'admin'];
     const userRole = validRoles.includes(role) ? role : 'user';
 
-    // Generate a temporary password to send via email (not returned in API)
-    const tempPassword = Math.random().toString(36).slice(-8);
+    // Generate a guaranteed 10-char temp password
+    const tempPassword = Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
 
     // Delegate to UserService for creation and token generation
     const result = await require('../services/userService').registerUser({
@@ -74,8 +74,12 @@ router.post('/users', async (req, res) => {
       user: result.user.toPublicJSON()
     });
   } catch (error) {
-    console.error('Create user error:', error);
-    return res.status(500).json({ success: false, message: 'Internal server error' });
+    console.error('Create user error:', error.message, error.code, error.keyValue);
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue || {})[0] || 'field';
+      return res.status(409).json({ success: false, message: `A user with this ${field} already exists` });
+    }
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }
 });
 
