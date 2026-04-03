@@ -27,10 +27,6 @@ const contentSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  metadata: {
-    type: mongoose.Schema.Types.Mixed,
-    default: {}
-  },
   images: [{
     url: {
       type: String,
@@ -55,11 +51,6 @@ const contentSchema = new mongoose.Schema({
       default: Date.now
     }
   }],
-  hasInlineImages: {
-    type: Boolean,
-    default: false
-  },
-  // Featured content flag for highlighting (content-level featuring)
   isFeatured: {
     type: Boolean,
     default: false,
@@ -73,16 +64,12 @@ const contentSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
-  // Deprecated: per-document rolling-window fields removed. Use DailyView collection for recent/period counts.
-  // recentViews: { type: Number, default: 0, min: 0 },
-  // windowStartTime: { type: Date, default: function() { const date = new Date(); date.setDate(date.getDate() - 7); return date; } },
   submissionId: {
     type: String,
     ref: 'Submission',
     required: true,
     index: true
   },
-  // SEO for individual content pieces
   seo: {
     slug: {
       type: String,

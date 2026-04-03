@@ -15,33 +15,26 @@ const tagService = require('./tagService');
 class SubmissionService {
   static async createSubmission(submissionData) {
     const { userId, authorId, title, description, submissionType, contents, profileData, status } = submissionData;
-
-    // Handle both userId and authorId (frontend compatibility)
     const actualUserId = userId || authorId;
-
-    // Verify user exists
     const user = await User.findById(actualUserId);
     if (!user) {
       throw new Error('User not found');
     }
 
-    // Handle first-time user profile data
     if (profileData && profileData.isFirstTimeSubmission) {
       await User.findByIdAndUpdate(actualUserId, {
         tempBio: profileData.tempBio || ''
       });
     }
 
-    // First create submission without content IDs
     const submission = new Submission({
       userId: actualUserId,
       title,
       description,
-      contentIds: [], // Empty initially
+      contentIds: [],
       submissionType,
-      status: status || SUBMISSION_STATUS.DRAFT, // Use provided status or default to 'draft'
-      readingTime: 1, // Default, will be updated
-      excerpt: '' // Default, will be updated
+      status: status || SUBMISSION_STATUS.DRAFT,
+      excerpt: '' 
     });
 
     // Prepare content documents (do this before any DB ops so we can reuse in both transactional and fallback flows)
@@ -69,9 +62,6 @@ class SubmissionService {
 
       // Use insertMany for bulk creation (honors session when provided)
       const createdContents = await Content.insertMany(contentDocs, { session, ordered: true });
-
-      // Calculate reading time and excerpt
-      const readingTime = Submission.calculateReadingTime(createdContents);
       const excerpt = Submission.generateExcerpt(createdContents);
 
       // Ensure we store string IDs consistently
@@ -80,7 +70,7 @@ class SubmissionService {
       // Update submission atomically (within transaction if available)
       const updatedSubmission = await Submission.findByIdAndUpdate(
         savedSubmission._id,
-        { $set: { contentIds, readingTime, excerpt } },
+        { $set: { contentIds, excerpt } },
         { new: true, session }
       );
 
@@ -114,12 +104,11 @@ class SubmissionService {
         // Create contents (non-transactional)
         const createdContentsFallback = await Content.create(contentDocs);
 
-        const readingTime = Submission.calculateReadingTime(createdContentsFallback);
         const excerpt = Submission.generateExcerpt(createdContentsFallback);
         const contentIds = createdContentsFallback.map(c => String(c._id));
 
         // Use findByIdAndUpdate (atomic single write) to ensure contentIds are written even if previous save succeeded
-        await Submission.findByIdAndUpdate(savedSubmissionFallback._id, { $set: { contentIds, readingTime, excerpt } });
+        await Submission.findByIdAndUpdate(savedSubmissionFallback._id, { $set: { contentIds, excerpt } });
 
         return await Submission.findById(savedSubmissionFallback._id);
       } catch (fallbackErr) {
@@ -138,7 +127,7 @@ class SubmissionService {
 
     // Use .select() to only fetch required fields - exclude large fields like description
     const submissions = await Submission.find(query)
-      .select('title excerpt imageUrl readingTime reviewedAt submissionType tags userId reviewedBy')
+      .select('title excerpt imageUrl reviewedAt submissionType tags userId reviewedBy')
       .populate('userId', 'name username')
       .populate('reviewedBy', 'username')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
@@ -154,7 +143,6 @@ class SubmissionService {
       title: sub.title,
       excerpt: sub.excerpt,
       imageUrl: sub.imageUrl,
-      readingTime: sub.readingTime,
       reviewedAt: sub.reviewedAt,
       submissionType: sub.submissionType,
       // Note: Submission-level tags are no longer stored. To get tags, call getSubmissionWithContent or published details.
@@ -181,7 +169,7 @@ class SubmissionService {
 
     // Use .select() to exclude large fields like description and contentIds for listing
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId seo')
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt userId seo')
       .populate('userId', 'name username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
@@ -198,7 +186,6 @@ class SubmissionService {
         excerpt: sub.excerpt,
         imageUrl: sub.imageUrl,
         publishedAt: sub.reviewedAt || sub.createdAt,
-        readingTime: sub.readingTime,
         slug: sub.seo?.slug,
         seo: sub.seo,
         author: {
@@ -411,7 +398,6 @@ class SubmissionService {
         username: populatedSubmission.userId.username
       },
       publishedAt: populatedSubmission.reviewedAt || populatedSubmission.createdAt,
-      readingTime: populatedSubmission.readingTime,
       imageUrl: populatedSubmission.imageUrl,
       excerpt: populatedSubmission.excerpt,
       contents: populatedSubmission.contentIds,
@@ -424,17 +410,23 @@ class SubmissionService {
     if (!userId) throw new Error('userId required');
 
     const { limit = 20, skip = 0, status } = options;
-
+    console.log("Submissions query for userId:", userId, "with status filter:", status);
     const query = { userId: String(userId) };
-    if (status) query.status = status;
+    if (status) {
+      // Support comma-separated status values (e.g. "published,resubmitted") or a single value
+      const statusList = String(status).split(',').map(s => s.trim()).filter(Boolean);
+      query.status = statusList.length === 1 ? statusList[0] : { $in: statusList };
+    }
 
     const submissions = await Submission.find(query)
-      .select('title excerpt status submissionType imageUrl createdAt updatedAt readingTime seo')
+      .select('title excerpt status submissionType imageUrl createdAt updatedAt seo')
       .populate('userId', 'name username profileImage')
       .sort({ createdAt: -1 })
       .limit(Number(limit))
       .skip(Number(skip))
       .lean();
+
+      console.log(submissions.length, "submissions retrieved for userId:", userId);
 
     // Attach latest review notes (if any) from Review collection for each submission
     try {
@@ -588,7 +580,7 @@ class SubmissionService {
     if (type) query.submissionType = type;
 
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId contentIds')
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt userId contentIds')
       .populate('userId', 'name username email profileImage')
       .sort({ reviewedAt: -1 })
       .limit(parseInt(limit))
@@ -602,7 +594,6 @@ class SubmissionService {
       excerpt: sub.excerpt,
       imageUrl: sub.imageUrl,
       publishedAt: sub.reviewedAt || sub.createdAt,
-      readingTime: sub.readingTime,
       author: {
         _id: sub.userId._id,
         name: sub.userId.name,
@@ -640,8 +631,7 @@ class SubmissionService {
       {
         $group: {
           _id: '$status',
-          count: { $sum: 1 },
-          avgReadingTime: { $avg: '$readingTime' }
+          count: { $sum: 1 }
         }
       }
     ];
@@ -653,15 +643,11 @@ class SubmissionService {
       pending_review: 0,
       accepted: 0,
       published: 0,
-      rejected: 0,
-      avgReadingTime: 0
+      rejected: 0
     };
 
     stats.forEach(stat => {
       result[stat._id] = stat.count;
-      if (stat._id === 'published') {
-        result.avgReadingTime = Math.round(stat.avgReadingTime);
-      }
     });
 
     return result;
@@ -679,7 +665,7 @@ class SubmissionService {
     };
 
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt readingTime userId')
+      .select('title submissionType excerpt imageUrl reviewedAt createdAt userId')
       .populate('userId', 'name username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
@@ -696,7 +682,6 @@ class SubmissionService {
         excerpt: sub.excerpt,
         imageUrl: sub.imageUrl,
         publishedAt: sub.reviewedAt || sub.createdAt,
-        readingTime: sub.readingTime,
         slug: sub.seo?.slug,
         seo: sub.seo,
         author: {
@@ -840,7 +825,6 @@ class SubmissionService {
       contentIds: [], // Empty initially
       submissionType,
       status: SUBMISSION_STATUS.DRAFT, // Default to draft
-      readingTime: 1, // Default, will be updated
       excerpt: '' // Default, will be updated
     });
 
@@ -870,8 +854,7 @@ class SubmissionService {
       // Use insertMany for bulk creation (honors session when provided)
       const createdContents = await Content.insertMany(contentDocs, { session, ordered: true });
 
-      // Calculate reading time and excerpt
-      const readingTime = Submission.calculateReadingTime(createdContents);
+      // Calculate excerpt
       const excerpt = Submission.generateExcerpt(createdContents);
 
       // Ensure we store string IDs consistently
@@ -880,7 +863,7 @@ class SubmissionService {
       // Update submission atomically (within transaction if available)
       const updatedSubmission = await Submission.findByIdAndUpdate(
         savedSubmission._id,
-        { $set: { contentIds, readingTime, excerpt } },
+        { $set: { contentIds, excerpt } },
         { new: true, session }
       );
 
@@ -914,12 +897,11 @@ class SubmissionService {
         // Create contents (non-transactional)
         const createdContentsFallback = await Content.create(contentDocs);
 
-        const readingTime = Submission.calculateReadingTime(createdContentsFallback);
         const excerpt = Submission.generateExcerpt(createdContentsFallback);
         const contentIds = createdContentsFallback.map(c => String(c._id));
 
         // Use findByIdAndUpdate (atomic single write) to ensure contentIds are written even if previous save succeeded
-        await Submission.findByIdAndUpdate(savedSubmissionFallback._id, { $set: { contentIds, readingTime, excerpt } });
+        await Submission.findByIdAndUpdate(savedSubmissionFallback._id, { $set: { contentIds, excerpt } });
 
         return await Submission.findById(savedSubmissionFallback._id);
       } catch (fallbackErr) {
@@ -937,15 +919,27 @@ class SubmissionService {
     if (!submission) throw new Error('Submission not found');
 
     // Extract expected payload pieces
-    const submissionMeta = (seoData && seoData.submissionMeta) ? seoData.submissionMeta : {};
-    const perContentTags = (seoData && seoData.perContentTags) ? seoData.perContentTags : {};
-    const perContentMeta = (seoData && seoData.perContentMeta) ? seoData.perContentMeta : {};
+    const submissionMeta = seoData?.submissionMeta ?? {};
+    const perContentTags = seoData?.perContentTags ?? {};
+    const perContentMeta = seoData?.perContentMeta ?? {};
     const keywords = seoData.keywords || submissionMeta.keywords || [];
+
+    // --- Slug uniqueness check (before any writes) ---
+    const incomingSlug = submissionMeta.slug ? String(submissionMeta.slug).trim() : null;
+    if (incomingSlug) {
+      const slugConflict = await Submission.findOne({
+        'seo.slug': incomingSlug,
+        _id: { $ne: id }
+      }).select('_id').lean();
+      if (slugConflict) {
+        throw new Error(`Slug "${incomingSlug}" is already in use by another submission`);
+      }
+    }
 
     // Ensure submission.seo exists
     submission.seo = submission.seo || {};
 
-    if (submissionMeta.slug) submission.seo.slug = String(submissionMeta.slug).trim();
+    if (incomingSlug) submission.seo.slug = incomingSlug;
     if (submissionMeta.metaTitle) submission.seo.metaTitle = String(submissionMeta.metaTitle).trim();
     if (submissionMeta.metaDescription) submission.seo.metaDescription = String(submissionMeta.metaDescription).trim();
     if (submissionMeta.primaryKeyword) submission.seo.primaryKeyword = String(submissionMeta.primaryKeyword).trim();
@@ -956,31 +950,38 @@ class SubmissionService {
     // Update per-content tags and content-level SEO
     try {
       // Collect all content ids referenced in either tags or meta
-      const contentIdSet = new Set();
-      Object.keys(perContentTags || {}).forEach(k => contentIdSet.add(k));
-      Object.keys(perContentMeta || {}).forEach(k => contentIdSet.add(k));
+      const contentIdSet = new Set([
+        ...Object.keys(perContentTags),
+        ...Object.keys(perContentMeta)
+      ]);
 
-      for (const contentId of Array.from(contentIdSet)) {
-        // Update tags for this content if provided
-        const tagsForContent = Array.isArray(perContentTags[contentId]) ? perContentTags[contentId].map(t => (t || '').trim()).filter(Boolean) : [];
+      for (const contentId of contentIdSet) {
+        const updateFields = {};
+
+        // --- Tags ---
+        const tagsForContent = Array.isArray(perContentTags[contentId])
+          ? perContentTags[contentId].map(t => (t || '').trim()).filter(Boolean)
+          : [];
         if (tagsForContent.length > 0) {
           // Create/find Tag documents and set Content.tags to array of Tag _id
           const createdTags = await tagService.findOrCreateMany(tagsForContent);
-          const tagIds = createdTags.map(t => t._id);
-          await Content.findByIdAndUpdate(contentId, { $set: { tags: tagIds } });
+          updateFields.tags = createdTags.map(t => t._id);
         }
 
-        // Update content-level SEO
+        // --- Content-level SEO ---
+        // Content schema uses `seo.keyword` (singular), not `primaryKeyword`
         const meta = perContentMeta[contentId];
-        if (meta && (meta.metaTitle || meta.metaDescription || meta.primaryKeyword)) {
-          const seoUpdate = {
-            seo: {
-              metaTitle: meta.metaTitle || '',
-              metaDescription: meta.metaDescription || '',
-              primaryKeyword: meta.primaryKeyword || ''
-            }
-          };
-          await Content.findByIdAndUpdate(contentId, { $set: seoUpdate });
+        if (meta) {
+          const seoUpdate = {};
+          if (meta.metaTitle !== undefined) seoUpdate['seo.metaTitle'] = String(meta.metaTitle || '').trim();
+          if (meta.metaDescription !== undefined) seoUpdate['seo.metaDescription'] = String(meta.metaDescription || '').trim();
+          if (meta.primaryKeyword !== undefined) seoUpdate['seo.keyword'] = String(meta.primaryKeyword || '').trim();
+          if (meta.slug !== undefined) seoUpdate['seo.slug'] = String(meta.slug || '').trim();
+          Object.assign(updateFields, seoUpdate);
+        }
+
+        if (Object.keys(updateFields).length > 0) {
+          await Content.findByIdAndUpdate(contentId, { $set: updateFields });
         }
       }
     } catch (err) {
@@ -988,18 +989,19 @@ class SubmissionService {
       console.warn('SubmissionService.publishWithSEO - failed to update content tags/meta:', err && (err.message || err));
     }
 
-    // Mark submission as published
     // Apply any top-level submission fields provided in the payload (title, description, excerpt)
     // Frontend sends these at the top level when calling publish-with-seo; ensure they're saved.
-    if (seoData && Object.prototype.hasOwnProperty.call(seoData, 'title')) {
+    if (Object.prototype.hasOwnProperty.call(seoData, 'title')) {
       submission.title = String(seoData.title || submission.title || '').trim();
     }
-    if (seoData && Object.prototype.hasOwnProperty.call(seoData, 'description')) {
+    if (Object.prototype.hasOwnProperty.call(seoData, 'description')) {
       submission.description = String(seoData.description || submission.description || '').trim();
     }
-    if (seoData && Object.prototype.hasOwnProperty.call(seoData, 'excerpt')) {
+    if (Object.prototype.hasOwnProperty.call(seoData, 'excerpt')) {
       submission.excerpt = String(seoData.excerpt || submission.excerpt || '').trim();
     }
+
+    // Mark submission as published
     submission.status = SUBMISSION_STATUS.PUBLISHED;
     submission.reviewedAt = new Date();
     submission.reviewedBy = publisherId;
@@ -1007,8 +1009,9 @@ class SubmissionService {
 
     await submission.save();
 
-    // Return populated submission for frontend
-    const populated = await Submission.populateContentIds(await Submission.findById(submission._id));
+    // Return populated submission — use the already-saved in-memory document directly
+    // to avoid a redundant DB round-trip.
+    const populated = await Submission.populateContentIds(submission);
     await SubmissionService._ensureTagObjects(populated);
     if (populated.contentIds) {
       populated.contents = populated.contentIds;

@@ -480,6 +480,15 @@ class UserService {
        const totalAgg = await Submission.aggregate([
          { $match: { status: SUBMISSION_STATUS.PUBLISHED } },
          { $group: { _id: '$userId' } },
+         {
+           $lookup: {
+             from: 'users',
+             localField: '_id',
+             foreignField: '_id',
+             as: 'user'
+           }
+         },
+         { $unwind: '$user' },
          { $count: 'total' }
        ]);
 

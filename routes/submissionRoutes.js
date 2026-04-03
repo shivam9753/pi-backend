@@ -1,15 +1,11 @@
 const express = require('express');
 const multer = require('multer');
 const Submission = require('../models/Submission');
-const Content = require('../models/Content');
-const Review = require('../models/Review');
-// const Analytics = require('../models/Analytics'); // Analytics model removed — analytics DB dropped
 const SubmissionService = require('../services/submissionService');
 const { authenticateUser, requireReviewer, requireWriter, requireAdmin } = require('../middleware/auth');
 const { 
   validateSubmissionCreation, 
-  validateSubmissionUpdate, 
-  validateStatusUpdate,
+  validateSubmissionUpdate,
   validateObjectId,
   validatePagination 
 } = require('../middleware/validation');
@@ -20,12 +16,10 @@ const { ImageService } = require('../config/imageService');
 
 // Import the new analysis service
 const AnalysisService = require('../services/analysisService');
-const analysisService = new AnalysisService();
 
 const router = express.Router();
 
 
-// Use memory storage for multer since we'll handle storage through ImageService
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: { fileSize: 3 * 1024 * 1024 }, // 3MB limit (allow small multipart overhead over 2MB compressed images)
@@ -155,320 +149,7 @@ router.post('/:id/upload-image',
   }
 );
 
-// ========================================
-// DEBUG ENDPOINT - TEMPORARY
-// ========================================
 
-// GET /api/submissions/debug-count - Check actual database counts
-router.get('/debug-count', authenticateUser, async (req, res) => {
-  try {
-    console.log('🔍 Database Debug Count Check:');
-    
-    // Count all submissions
-    const totalSubmissions = await Submission.countDocuments({});
-    console.log('- Total submissions in database:', totalSubmissions);
-    
-    // Count by each status
-    const statusCounts = await Submission.aggregate([
-      { $group: { _id: '$status', count: { $sum: 1 } } },
-      { $sort: { count: -1 } }
-    ]);
-    console.log('- Status breakdown:', statusCounts);
-    
-    // Count review queue submissions
-    const reviewQueueQuery = {
-      status: { $in: ['pending_review', 'in_progress', 'shortlisted', 'resubmitted'] }
-    };
-    const reviewQueueCount = await Submission.countDocuments(reviewQueueQuery);
-    console.log('- Review queue count:', reviewQueueCount);
-    
-    // Get sample review queue submissions to check their actual data
-    const sampleSubmissions = await Submission.find(reviewQueueQuery)
-      .select('title status createdAt')
-      .limit(5)
-      .sort({ createdAt: -1 });
-    console.log('- Sample review queue submissions:', sampleSubmissions);
-    
-    res.json({
-      success: true,
-      debug: {
-        totalSubmissions,
-        statusCounts,
-        reviewQueueCount,
-        sampleSubmissions
-      }
-    });
-  } catch (error) {
-    console.error('Debug count error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ========================================
-// NEW OPTIMIZED LIGHTWEIGHT ENDPOINTS
-// ========================================
-
-// GET /api/submissions/review-queue - Lightweight review workflow cards
-router.get('/review-queue', authenticateUser, requireReviewer, validatePagination, async (req, res) => {
-  try {
-    const {
-      limit = 20,
-      skip = 0,
-      status,
-      type,
-      urgent,
-      newAuthor,
-      quickRead,
-      topicSubmission,
-      sortBy = 'createdAt',
-      order = 'desc'
-    } = req.query;
-
-    // Build query for review queue statuses
-    const query = {
-      status: {
-        $in: ['pending_review', 'in_progress', 'shortlisted', 'resubmitted']
-      }
-    };
-
-    // Apply filters
-    if (status && status !== 'all') {
-      query.status = status;
-    }
-    if (type && type !== 'all') {
-      query.submissionType = type;
-    }
-
-    // Build aggregation pipeline for lightweight data
-    const pipeline = [
-      { $match: query },
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'userId',
-          foreignField: '_id',
-          as: 'author'
-        }
-      },
-      { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
-      {
-        $lookup: {
-          from: 'submissions',
-          let: { authorId: { $ifNull: ['$author._id', null] } },
-          pipeline: [
-            { 
-              $match: { 
-                $expr: { 
-                  $and: [
-                    { $ne: ['$$authorId', null] },
-                    { $eq: ['$userId', '$$authorId'] }
-                  ]
-                }, 
-                status: 'published' 
-              } 
-            },
-            { $count: 'publishedCount' }
-          ],
-          as: 'authorStats'
-        }
-      },
-      {
-        $addFields: {
-          isNewAuthor: {
-            $cond: {
-              if: { $eq: ['$author._id', null] },
-              then: false, // Submissions without authors are not considered "new author"
-              else: { $eq: [{ $ifNull: [{ $arrayElemAt: ['$authorStats.publishedCount', 0] }, 0] }, 0] }
-            }
-          },
-          isUrgent: {
-            $or: [
-              { $eq: ['$status', 'resubmitted'] },
-              {
-                $and: [
-                  { $gte: [{ $subtract: [new Date(), '$createdAt'] }, 7 * 24 * 60 * 60 * 1000] } // 7 days old
-                ]
-              }
-            ]
-          }
-        }
-      },
-      {
-        $project: {
-          _id: 1,
-          title: 1,
-          excerpt: 1,
-          submissionType: 1,
-          status: 1,
-          createdAt: 1,
-          updatedAt: 1,
-          readingTime: 1,
-          wordCount: 1,
-          imageUrl: 1,
-          isUrgent: 1,
-          isNewAuthor: 1,
-          author: {
-            _id: '$author._id',
-            name: '$author.name',
-            username: '$author.username',
-            email: '$author.email'
-          }
-        }
-      }
-    ];
-
-    // Apply additional filters
-    if (urgent === 'true') {
-      pipeline.push({ $match: { isUrgent: true } });
-    }
-    if (newAuthor === 'true') {
-      pipeline.push({ $match: { isNewAuthor: true } });
-    }
-    if (quickRead === 'true') {
-      pipeline.push({ $match: { readingTime: { $lte: 5 } } });
-    }
-
-    // Create count pipeline BEFORE adding pagination
-    const countPipeline = [...pipeline];
-    countPipeline.push({ $count: "total" });
-    
-    // Add sorting to main pipeline
-    const sortOrder = order === 'asc' ? 1 : -1;
-    pipeline.push({ $sort: { [sortBy]: sortOrder } });
-
-    // Add pagination to main pipeline
-    pipeline.push({ $skip: parseInt(skip) });
-    pipeline.push({ $limit: parseInt(limit) });
-
-    // Execute both pipelines
-    const [submissions, countResult] = await Promise.all([
-      Submission.aggregate(pipeline),
-      Submission.aggregate(countPipeline)
-    ]);
-    
-    const total = countResult.length > 0 ? countResult[0].total : 0;
-    
-    res.json({
-      success: true,
-      submissions,
-      pagination: {
-        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
-        totalPages: Math.ceil(total / parseInt(limit)),
-        limit: parseInt(limit),
-        skip: parseInt(skip),
-        hasMore: (parseInt(skip) + parseInt(limit)) < total
-      },
-      total,
-      filters: {
-        statuses: ['pending_review', 'in_progress', 'shortlisted', 'resubmitted'],
-        types: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion'],
-        urgent: urgent === 'true',
-        newAuthor: newAuthor === 'true',
-        quickRead: quickRead === 'true'
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching review queue:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching review queue', 
-      error: error.message 
-    });
-  }
-});
-
-// GET /api/submissions/publish-queue - Lightweight publish workflow cards
-router.get('/publish-queue', authenticateUser, requireReviewer, validatePagination, async (req, res) => {
-  try {
-    const {
-      limit = 20,
-      skip = 0,
-      type,
-      sortBy = 'acceptedAt',
-      order = 'desc'
-    } = req.query;
-
-    // Build query for accepted submissions ready to publish
-    const query = {
-      status: 'accepted'
-    };
-
-    // Apply type filter
-    if (type && type !== 'all') {
-      query.submissionType = type;
-    }
-
-    // Build aggregation pipeline for lightweight publish data
-    const pipeline = [
-      { $match: query },
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'userId',
-          foreignField: '_id',
-          as: 'author'
-        }
-      },
-      { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
-      {
-        $project: {
-          _id: 1,
-          title: 1,
-          excerpt: 1,
-          submissionType: 1,
-          status: 1,
-          acceptedAt: '$reviewedAt',
-          createdAt: 1,
-          readingTime: 1,
-          imageUrl: 1,
-          hasImage: { $ne: ['$imageUrl', null] },
-          author: {
-            _id: '$author._id',
-            name: '$author.name',
-            username: '$author.username'
-          }
-        }
-      }
-    ];
-
-    // Add sorting
-    const sortOrder = order === 'asc' ? 1 : -1;
-    const sortField = sortBy === 'acceptedAt' ? 'acceptedAt' : sortBy;
-    pipeline.push({ $sort: { [sortField]: sortOrder } });
-
-    // Add pagination
-    pipeline.push({ $skip: parseInt(skip) });
-    pipeline.push({ $limit: parseInt(limit) });
-
-    const submissions = await Submission.aggregate(pipeline);
-    const total = await Submission.countDocuments(query);
-
-    res.json({
-      success: true,
-      submissions,
-      pagination: {
-        currentPage: Math.floor(parseInt(skip) / parseInt(limit)) + 1,
-        totalPages: Math.ceil(total / parseInt(limit)),
-        limit: parseInt(limit),
-        skip: parseInt(skip),
-        hasMore: (parseInt(skip) + parseInt(limit)) < total
-      },
-      total,
-      filters: {
-        types: ['poem', 'prose', 'article', 'book_review', 'cinema_essay', 'opinion']
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching publish queue:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching publish queue', 
-      error: error.message 
-    });
-  }
-});
-
-// GET /api/submissions/explore - Lightweight public content cards  
 router.get('/explore', validatePagination, async (req, res) => {
   try {
     const {
@@ -515,9 +196,7 @@ router.get('/explore', validatePagination, async (req, res) => {
           excerpt: 1,
           submissionType: 1,
           publishedAt: '$reviewedAt',
-          // expose createdAt so clients can sort by creation time
           createdAt: 1,
-          readingTime: 1,
           viewCount: { $ifNull: ['$viewCount', 0] },
           imageUrl: 1,
           featured: { $ifNull: ['$featured', false] },
@@ -585,14 +264,6 @@ router.get('/explore', validatePagination, async (req, res) => {
     });
   }
 });
-
-
-
-
-
-// ========================================
-// END OF NEW OPTIMIZED ENDPOINTS
-// ========================================
 
 // GET /api/submissions/:id/history - Get submission with full history
 router.get('/:id/history', authenticateUser, validateObjectId('id'), async (req, res) => {
@@ -762,9 +433,9 @@ router.get('/', validatePagination, async (req, res) => {
     let selectFields;
     if (status === 'published' || status === 'published_and_draft') {
       // Do NOT select submission-level tags - tags are derived from content at read-time
-      selectFields = 'title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount readingTime userId seo status';
+      selectFields = 'title submissionType excerpt imageUrl reviewedAt createdAt viewCount likeCount userId seo status';
     } else {
-      selectFields = 'title excerpt imageUrl readingTime submissionType userId reviewedBy createdAt reviewedAt status';
+      selectFields = 'title excerpt imageUrl submissionType userId reviewedBy createdAt reviewedAt status';
     }
     
     // Create a deterministic sort - handle null values properly and ensure consistent results
@@ -822,7 +493,6 @@ router.get('/', validatePagination, async (req, res) => {
         publishedAt: sub.reviewedAt || sub.createdAt,
         viewCount: sub.viewCount,
         likeCount: sub.likeCount,
-        readingTime: sub.readingTime,
         tags: [], // Submission-level tags are not stored; use detail endpoint to get aggregated tags
         slug: sub.seo?.slug,
         authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
@@ -843,7 +513,6 @@ router.get('/', validatePagination, async (req, res) => {
         submissionType: sub.submissionType,
         excerpt: sub.excerpt,
         imageUrl: sub.imageUrl,
-        readingTime: sub.readingTime,
         tags: [],
         status: sub.status,
         authorName: sub.userId?.name || sub.userId?.username || 'Unknown',
@@ -866,7 +535,6 @@ router.get('/', validatePagination, async (req, res) => {
         title: sub.title,
         excerpt: sub.excerpt,
         imageUrl: sub.imageUrl,
-        readingTime: sub.readingTime,
         submissionType: sub.submissionType,
         tags: [],
         status: sub.status,
@@ -926,8 +594,6 @@ router.get('/', validatePagination, async (req, res) => {
   }
 });
 
-// DEPRECATED: Use /api/submissions?status=published instead
-
 // GET /api/submissions/published/:id - Get single published submission
 router.get('/published/:id', validateObjectId('id'), async (req, res) => {
   try {
@@ -960,10 +626,6 @@ router.get('/featured', async (req, res) => {
     res.status(500).json({ message: 'Error fetching featured submissions', error: error.message });
   }
 });
-
-// DEPRECATED: Use /api/submissions/explore?user=me instead
-// This endpoint is redundant with /users/profile which provides user data + submission stats
-// Use /users/profile for complete user profile, or /submissions/explore?user=me for submission list
 
 // GET /api/submissions/user/me - Get current user's submissions (must come before /:userId)
 router.get('/user/me', authenticateUser, async (req, res) => {
@@ -1002,7 +664,7 @@ router.get('/drafts/my', authenticateUser, validatePagination, async (req, res) 
     const query = { userId: req.user.userId, status: SUBMISSION_STATUS.DRAFT };
 
     const submissions = await Submission.find(query)
-      .select('title excerpt submissionType imageUrl createdAt updatedAt readingTime status seo')
+      .select('title excerpt submissionType imageUrl createdAt updatedAt status seo')
       .populate('userId', 'name username profileImage')
       .sort({ createdAt: -1 })
       .limit(limit)
@@ -1095,7 +757,6 @@ router.get('/trending', validatePagination, async (req, res) => {
       imageUrl: submission.imageUrl,
       publishedAt: submission.reviewedAt || submission.createdAt,
       viewCount: submission.viewCount,
-      readingTime: submission.readingTime,
       slug: submission.seo?.slug,
       authorName: submission.userId?.name || submission.userId?.username || 'Unknown'
     }));
@@ -1157,8 +818,6 @@ router.post('/:id/view', validateObjectId('id'), async (req, res) => {
   }
 });
 
-// MOVED: Generic /:id route moved to end to avoid conflicts with specific routes like /explore
-
 // GET /api/submissions/:id/contents - Get submission with contents
 router.get('/:id/contents', authenticateUser, validateObjectId('id'), async (req, res) => {
   try {
@@ -1195,7 +854,6 @@ router.get('/:id/review', authenticateUser, requireReviewer, validateObjectId('i
       status: submission.status,
       imageUrl: submission.imageUrl,
       excerpt: submission.excerpt,
-      readingTime: submission.readingTime,
       createdAt: submission.createdAt,
       updatedAt: submission.updatedAt,
       userId: {
@@ -1225,8 +883,6 @@ router.get('/:id/review', authenticateUser, requireReviewer, validateObjectId('i
 // POST /api/submissions - Create new submission
 router.post('/', authenticateUser, validateSubmissionCreation, async (req, res) => {
   try {
-    // Remove any tag data sent by client at submission creation
-    if (req.body.tags) delete req.body.tags;
     if (Array.isArray(req.body.contents)) {
       req.body.contents = req.body.contents.map(c => ({
         title: c.title,
@@ -1259,13 +915,11 @@ router.post('/', authenticateUser, validateSubmissionCreation, async (req, res) 
 
       if (duplicate) {
         console.warn('Duplicate submission prevented for user', req.user._id, 'title:', submissionData.title);
-        // Return populated submission so client can proceed as if it was created
         const populated = await SubmissionService.getSubmissionWithContent(duplicate._id);
         return res.status(200).json({ message: 'Duplicate submission detected; returning existing submission', submission: populated });
       }
     } catch (dedupeErr) {
       console.warn('Dedupe check failed, continuing with create:', dedupeErr);
-      // fallthrough to create submission
     }
 
     const submission = await SubmissionService.createSubmission(submissionData);
@@ -1303,6 +957,80 @@ router.get('/by-slug/:slug', async (req, res) => {
   }
 });
 
+// GET /api/submissions/related - Get published submissions of the same type as the given submission
+// Query params:
+//   id       (required) - the submission ID whose related content to find
+//   limit    (optional, default 10, max 20)
+//   skip     (optional, default 0)
+router.get('/related', async (req, res) => {
+  try {
+    const { id, limit = 10, skip = 0 } = req.query;
+
+    if (!id || typeof id !== 'string' || !id.trim()) {
+      return res.status(400).json({ success: false, message: 'Query param "id" is required' });
+    }
+
+    const limitNum = Math.min(Number.parseInt(limit, 10) || 10, 20);
+    const skipNum = Math.max(Number.parseInt(skip, 10) || 0, 0);
+
+    // Fetch the source submission to read its type
+    const source = await Submission.findById(id.trim()).select('submissionType').lean();
+    if (!source) {
+      return res.status(404).json({ success: false, message: 'Submission not found' });
+    }
+
+    // TODO: extend matching logic (e.g. shared tags, same author, vector similarity)
+    const query = {
+      status: SUBMISSION_STATUS.PUBLISHED,
+      submissionType: source.submissionType,
+      _id: { $ne: id.trim() } // exclude the source submission itself
+    };
+
+    const [related, total] = await Promise.all([
+      Submission.find(query)
+        .select('title excerpt submissionType imageUrl reviewedAt createdAt userId seo')
+        .populate('userId', 'name username profileImage')
+        .sort({ reviewedAt: -1 })
+        .skip(skipNum)
+        .limit(limitNum)
+        .lean(),
+      Submission.countDocuments(query)
+    ]);
+
+    const submissions = related.map(sub => ({
+      _id: sub._id,
+      title: sub.title,
+      excerpt: sub.excerpt,
+      submissionType: sub.submissionType,
+      imageUrl: sub.imageUrl,
+      slug: sub.seo?.slug,
+      publishedAt: sub.reviewedAt || sub.createdAt,
+      author: {
+        _id: sub.userId?._id || null,
+        name: sub.userId?.name || sub.userId?.username || 'Unknown',
+        username: sub.userId?.username || null,
+        profileImage: sub.userId?.profileImage || null
+      }
+    }));
+
+    return res.json({
+      success: true,
+      submissions,
+      total,
+      pagination: {
+        limit: limitNum,
+        skip: skipNum,
+        hasMore: (skipNum + limitNum) < total,
+        currentPage: Math.floor(skipNum / limitNum) + 1,
+        totalPages: Math.ceil(total / limitNum)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching related submissions:', error);
+    return res.status(500).json({ success: false, message: 'Error fetching related submissions', error: error.message });
+  }
+});
+
 // GET /api/submissions/random - Return random published submissions (public)
 router.get('/random', async (req, res) => {
   try {
@@ -1331,7 +1059,6 @@ router.get('/random', async (req, res) => {
           excerpt: 1,
           submissionType: 1,
           imageUrl: 1,
-          readingTime: 1,
           slug: '$seo.slug',
           publishedAt: '$reviewedAt',
           author: {
@@ -1509,7 +1236,7 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
     }
 
     // Whitelist updatable fields for resubmission
-    const updatable = ['title', 'description', 'excerpt', 'contents', 'submissionType', 'seo', 'imageUrl', 'readingTime', 'revisionNotes'];
+    const updatable = ['title', 'description', 'excerpt', 'contents', 'submissionType', 'seo', 'imageUrl', 'revisionNotes'];
     updatable.forEach(field => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         submission[field] = req.body[field];

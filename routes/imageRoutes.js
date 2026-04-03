@@ -4,14 +4,12 @@ const { ImageService } = require('../config/imageService');
 const Content = require('../models/Content');
 const router = express.Router();
 
-// Configure multer for memory storage
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 2 * 1024 * 1024, // 2MB limit
   },
   fileFilter: (req, file, cb) => {
-    // Accept only image files
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
@@ -20,7 +18,6 @@ const upload = multer({
   }
 });
 
-// POST /api/images/upload - Upload image to S3
 router.post('/upload', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
@@ -33,7 +30,6 @@ router.post('/upload', upload.single('image'), async (req, res) => {
     const { submissionType = 'article', alt = '', caption = '', temporary = 'false', folder: customFolder } = req.body;
     const isTemporary = temporary === 'true' || temporary === true;
 
-    // Determine folder based on submission type and temporary status
     const folderMap = {
       'article': 'articles',
       'cinema_essay': 'essays',
@@ -41,11 +37,9 @@ router.post('/upload', upload.single('image'), async (req, res) => {
       'poem': 'poems'
     };
 
-    // Use custom folder if provided (e.g., 'profiles'), otherwise use folderMap
     const baseFolder = customFolder === 'profiles' ? 'profiles' : (folderMap[submissionType] || 'general');
     const folder = isTemporary ? `temp/${baseFolder}` : baseFolder;
 
-    // Upload using environment-aware service (S3 for prod, local for dev)
     const uploadOptions = {
       quality: 85,
       maxWidth: 1200,
@@ -54,7 +48,6 @@ router.post('/upload', upload.single('image'), async (req, res) => {
       folder: folder
     };
 
-    // Add minimum file size requirement for profile images
     if (folder === 'profiles') {
       uploadOptions.minimumFileSize = 100 * 1024; // 100KB minimum for profiles
     }
@@ -73,11 +66,8 @@ router.post('/upload', upload.single('image'), async (req, res) => {
       });
     }
 
-    // Determine the best public URL to return to clients. Prefer CDN URL when available.
     const publicUrl = uploadResult.cdnUrl || uploadResult.url || uploadResult.fileUrl || '';
 
-    // If the server is configured to use S3 (production) but ImageService fell back to local storage,
-    // fail the upload to avoid returning developer-local URLs in production.
     try {
       const storageType = ImageService.getStorageType ? ImageService.getStorageType() : (process.env.NODE_ENV === 'production' ? 's3' : 'local');
       if (storageType === 's3' && uploadResult.fallbackUsed) {
@@ -91,7 +81,6 @@ router.post('/upload', upload.single('image'), async (req, res) => {
       console.warn('Could not determine storage type for uploaded image:', e && e.message ? e.message : e);
     }
 
-    // Return image data for frontend, exposing a canonical public URL in `url`.
     res.json({
       success: true,
       image: {
@@ -122,7 +111,6 @@ router.post('/upload', upload.single('image'), async (req, res) => {
   }
 });
 
-// POST /api/images/attach/:contentId - Attach uploaded image to content
 router.post('/attach/:contentId', async (req, res) => {
   try {
     const { contentId } = req.params;
@@ -135,7 +123,6 @@ router.post('/attach/:contentId', async (req, res) => {
       });
     }
 
-    // Add image to content
     const updatedContent = await Content.addS3Image(contentId, imageData);
 
     res.json({
@@ -153,7 +140,6 @@ router.post('/attach/:contentId', async (req, res) => {
   }
 });
 
-// DELETE /api/images/delete - Delete image by S3 key (for rich text editor)
 router.delete('/delete', async (req, res) => {
   try {
     const { s3Key } = req.body;
@@ -165,7 +151,6 @@ router.delete('/delete', async (req, res) => {
       });
     }
 
-    // Delete using environment-aware service
     const deleteResult = await ImageService.deleteImage(s3Key);
 
     if (!deleteResult.success) {
@@ -190,20 +175,16 @@ router.delete('/delete', async (req, res) => {
   }
 });
 
-// DELETE /api/images/:imageId/content/:contentId - Remove image from content and S3
 router.delete('/:imageId/content/:contentId', async (req, res) => {
   try {
     const { imageId, contentId } = req.params;
 
-    // Remove image from content and get S3 key
     const s3Key = await Content.removeS3Image(contentId, imageId);
 
-    // Delete using environment-aware service
     const deleteResult = await ImageService.deleteImage(s3Key);
 
     if (!deleteResult.success) {
       console.error('Failed to delete from S3:', deleteResult.error);
-      // Continue anyway - image removed from DB
     }
 
     res.json({
@@ -220,7 +201,6 @@ router.delete('/:imageId/content/:contentId', async (req, res) => {
   }
 });
 
-// GET /api/images/content/:contentId - Get all images for content
 router.get('/content/:contentId', async (req, res) => {
   try {
     const { contentId } = req.params;
@@ -262,20 +242,15 @@ router.post('/move-to-permanent', async (req, res) => {
 
     const movedImages = [];
     
-    // For each image URL, check if it's a temp image and move it
     for (const imageUrl of imageUrls) {
       try {
-        // Extract S3 key from URL (assuming URL structure)
         const urlParts = imageUrl.split('/');
         const fileName = urlParts[urlParts.length - 1];
         
-        // Check if it's a temp image URL
         if (imageUrl.includes('/temp/')) {
-          // For S3, we need to copy from temp to permanent location
           if (ImageService.getStorageType && ImageService.getStorageType() === 's3') {
             const S3ImageService = require('../config/s3').S3ImageService;
             
-            // Extract temp key from URL
             const tempKey = imageUrl.split('.amazonaws.com/')[1] || 
                            imageUrl.split('.cloudfront.net/')[1];
             
@@ -293,7 +268,6 @@ router.post('/move-to-permanent', async (req, res) => {
               }
             }
           } else {
-            // For local storage, just note that it would be moved
             movedImages.push({
               originalUrl: imageUrl,
               newUrl: imageUrl.replace('/temp/', '/'),
@@ -301,7 +275,6 @@ router.post('/move-to-permanent', async (req, res) => {
             });
           }
         } else {
-          // Already permanent, just keep as is
           movedImages.push({
             originalUrl: imageUrl,
             newUrl: imageUrl,
@@ -335,7 +308,6 @@ router.post('/move-to-permanent', async (req, res) => {
   }
 });
 
-// GET /api/images/health - Storage backend health check
 router.get('/health', async (req, res) => {
   try {
     const health = await ImageService.healthCheck();
@@ -349,7 +321,6 @@ router.get('/health', async (req, res) => {
   }
 });
 
-// Error handling middleware for multer
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {

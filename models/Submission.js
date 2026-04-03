@@ -1,11 +1,7 @@
 const mongoose = require('mongoose');
 const { 
   SUBMISSION_STATUS, 
-  REVIEW_ACTIONS, 
-  SUBMISSION_TYPES, 
-  STATUS_ARRAYS,
-  STATUS_ACTION_MAP,
-  STATUS_UTILS 
+  STATUS_ARRAYS
 } = require('../constants/status.constants');
 
 const submissionSchema = new mongoose.Schema({
@@ -51,35 +47,12 @@ const submissionSchema = new mongoose.Schema({
   },
   excerpt: {
     type: String,
-    maxlength: 200
-  },
-  readingTime: {
-    type: Number,
-    default: 1
+    maxlength: 300
   },
   isFeatured: {
     type: Boolean,
     default: false
   },
-  reviewedAt: {
-    type: Date
-  },
-  reviewedBy: {
-    type: String,
-    ref: 'User'
-  },
-  // Editorial workflow fields
-  assignedTo: {
-    type: String,
-    ref: 'User',
-    default: null
-  },
-  assignedAt: {
-    type: Date,
-    default: null
-  },
-  
-  // Submission history tracking
   history: [{
     action: {
       type: String,
@@ -110,12 +83,10 @@ const submissionSchema = new mongoose.Schema({
       default: ''
     }
   }],
-  // For needs_revision status
   revisionNotes: {
     type: String,
     default: ''
   },
-  // SEO Metadata
   seo: {
     slug: {
       type: String,
@@ -152,18 +123,6 @@ const submissionSchema = new mongoose.Schema({
       trim: true
     }
   },
-  // Draft-specific fields
-  lastEditedAt: {
-    type: Date,
-    default: Date.now
-  },
-  draftExpiresAt: {
-    type: Date,
-    index: true
-  },
-  // Topic pitch support removed
-  // Trending tracking fields
-  // Keep lifetime viewCount; per-doc rolling-window fields (recentViews/windowStartTime) are deprecated
   viewCount: {
     type: Number,
     default: 0,
@@ -172,9 +131,9 @@ const submissionSchema = new mongoose.Schema({
 }, {
   timestamps: true,
   versionKey: false,
-  _id: false // Disable automatic _id since we're defining our own string UUID _id
+  _id: false
 });
-
+submissionSchema.set('strictPopulate', false);
 // Indexes
 submissionSchema.index({ userId: 1 });
 submissionSchema.index({ status: 1 });
@@ -182,13 +141,10 @@ submissionSchema.index({ submissionType: 1 });
 submissionSchema.index({ createdAt: -1 });
 submissionSchema.index({ reviewedAt: -1 });
 submissionSchema.index({ isFeatured: 1 });
-// Compound indexes for common queries
 submissionSchema.index({ status: 1, submissionType: 1 });
 submissionSchema.index({ status: 1, isFeatured: 1 });
 submissionSchema.index({ status: 1, reviewedAt: -1 });
-// SEO slug index for fast URL lookups
 submissionSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
-// Keep indexes relevant to querying by counts
 submissionSchema.index({ viewCount: -1 });
 submissionSchema.index({ status: 1, viewCount: -1 });
 
@@ -199,7 +155,6 @@ submissionSchema.methods.toggleFeatured = async function() {
   return await this.save();
 };
 
-// Method to add history entry
 submissionSchema.methods.addHistoryEntry = async function(action, newStatus, userId, userRole, notes = '') {
   // Ensure we have a user ID for the history entry
   if (!userId || (typeof userId === 'string' && userId.trim().length === 0)) {
@@ -285,7 +240,6 @@ submissionSchema.methods.addHistoryEntry = async function(action, newStatus, use
   return this;
 };
 
-// Instance method to change status with history tracking
 submissionSchema.methods.changeStatus = async function(newStatus, user, notes = '') {
   const { STATUS_UTILS } = require('../constants/status.constants');
 
@@ -293,18 +247,15 @@ submissionSchema.methods.changeStatus = async function(newStatus, user, notes = 
     throw new Error('A valid newStatus string is required');
   }
 
-  // Validate status value
   if (!STATUS_UTILS.isValidSubmissionStatus(newStatus)) {
     throw new Error(`Invalid status: ${newStatus}`);
   }
 
   const fromStatus = this.status || '';
-  // Allow staying in same status; otherwise validate transition
   if (fromStatus && fromStatus !== newStatus && !STATUS_UTILS.isValidStatusTransition(fromStatus, newStatus)) {
     throw new Error(`Invalid status transition from ${fromStatus} to ${newStatus}`);
   }
 
-  // Normalize user input
   let userId = null;
   let userRole = null;
   if (user) {
@@ -315,20 +266,12 @@ submissionSchema.methods.changeStatus = async function(newStatus, user, notes = 
       userRole = user.role || null;
     }
   }
-
   if (!userId) {
     throw new Error('User information is required to change status');
   }
-
-  // Determine the action corresponding to the status
   let action = STATUS_UTILS.getActionForStatus(newStatus) || newStatus;
-
-  // Add history entry (this will also set status/reviewedAt/reviewedBy where appropriate)
   await this.addHistoryEntry(action, newStatus, String(userId), userRole, notes || '');
-
-  // Persist change
   await this.save();
-
   return this;
 };
 
@@ -443,49 +386,9 @@ submissionSchema.statics.findBySlug = async function(slug) {
   return submission;
 };
 
-// Static helper: calculate reading time from an array of content documents
-submissionSchema.statics.calculateReadingTime = function(contents) {
-  if (!Array.isArray(contents) || contents.length === 0) return 1;
-  const Content = require('./Content');
-
-  // Sum words across titles and bodies
-  let totalWords = 0;
-  contents.forEach(c => {
-    try {
-      const title = (c.title || '').toString();
-      const body = (c.body || '').toString();
-      // Prefer Content.calculateWordCount if available
-      if (typeof Content.calculateWordCount === 'function') {
-        totalWords += Content.calculateWordCount(title) + Content.calculateWordCount(body);
-      } else {
-        const strip = (s) => s.replace(/<[^>]*>/g, ' ');
-        const words = (strip(title) + ' ' + strip(body)).trim().split(/\s+/).filter(Boolean).length;
-        totalWords += words;
-      }
-    } catch (e) {
-      // ignore individual content errors
-    }
-  });
-
-  // Fallback minimal reading time is 1 minute
-  const wordsPerMinute = 200;
-  const minutes = Math.max(1, Math.ceil(totalWords / wordsPerMinute));
-  return minutes;
-};
-
 // Static helper: generate a short excerpt from contents
 submissionSchema.statics.generateExcerpt = function(contents, maxLength = 200) {
-  if (!Array.isArray(contents) || contents.length === 0) return '';
-
-  const first = contents[0];
-  let text = '';
-  if (first.title) text += String(first.title) + ' - ';
-  if (first.body) text += String(first.body);
-
-  // strip HTML
-  text = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength).trim() + '...';
+  return "";
 };
 
 module.exports = mongoose.model('Submission', submissionSchema);

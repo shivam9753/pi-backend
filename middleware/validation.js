@@ -70,7 +70,6 @@ const validateUserUpdate = [
 
 // Submission validation rules
 const validateSubmissionCreation = [
-  // Remove any top-level tags or per-content tags sent by clients
   body('tags').optional().customSanitizer(() => undefined),
   body('contents.*.tags').optional().customSanitizer(() => undefined),
   body('title')
