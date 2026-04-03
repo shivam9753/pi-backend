@@ -18,10 +18,6 @@ const validateUserRegistration = [
     .isEmail()
     .normalizeEmail()
     .withMessage('Valid email is required'),
-  body('username')
-    .isLength({ min: 2, max: 50 })
-    .matches(/^[a-zA-Z0-9_-]+$/)
-    .withMessage('Username must be 2-50 characters and contain only letters, numbers, underscores, and hyphens'),
   body('password')
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters long'),
@@ -33,11 +29,6 @@ const validateUserRegistration = [
 ];
 
 const validateUserUpdate = [
-  body('username')
-    .optional()
-    .isLength({ min: 2, max: 50 })
-    .matches(/^[a-zA-Z0-9_-]+$/)
-    .withMessage('Username must be 2-50 characters and contain only letters, numbers, underscores, and hyphens'),
   body('name')
     .optional()
     .isLength({ max: 100 })
