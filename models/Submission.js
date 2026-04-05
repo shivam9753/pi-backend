@@ -226,6 +226,14 @@ submissionSchema.methods.addHistoryEntry = async function(action, newStatus, use
     this.reviewedAt = new Date();
     this.reviewedBy = userId;
   }
+  if (action === 'published') {
+    // Set publishedAt only the first time it is published (preserve original publish date on republish)
+    if (!this.publishedAt) {
+      this.publishedAt = new Date();
+    }
+    this.reviewedAt = this.publishedAt;
+    this.reviewedBy = userId;
+  }
 
   // Handle assignment for in_progress status
   if (action === 'moved_to_in_progress') {

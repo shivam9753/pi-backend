@@ -195,7 +195,7 @@ router.get('/explore', validatePagination, async (req, res) => {
           title: 1,
           excerpt: 1,
           submissionType: 1,
-          publishedAt: '$reviewedAt',
+          publishedAt: '$publishedAt',
           createdAt: 1,
           viewCount: { $ifNull: ['$viewCount', 0] },
           imageUrl: 1,
@@ -230,7 +230,8 @@ router.get('/explore', validatePagination, async (req, res) => {
       default:
         sortField = 'publishedAt';
     }
-    pipeline.push({ $sort: { [sortField]: sortOrder } });
+    // Add _id as tiebreaker to ensure deterministic pagination
+    pipeline.push({ $sort: { [sortField]: sortOrder, _id: -1 } });
 
     // Add pagination
     pipeline.push({ $skip: parseInt(skip) });

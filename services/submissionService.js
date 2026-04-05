@@ -1003,9 +1003,10 @@ class SubmissionService {
 
     // Mark submission as published
     submission.status = SUBMISSION_STATUS.PUBLISHED;
-    submission.reviewedAt = new Date();
+    // Set publishedAt only the first time (preserve original publish date on re-publish)
+    if (!submission.publishedAt) submission.publishedAt = new Date();
+    submission.reviewedAt = submission.publishedAt;
     submission.reviewedBy = publisherId;
-    if (!submission.publishedAt) submission.publishedAt = submission.reviewedAt;
 
     await submission.save();
 
