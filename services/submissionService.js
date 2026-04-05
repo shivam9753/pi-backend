@@ -425,14 +425,9 @@ class SubmissionService {
       .limit(Number(limit))
       .skip(Number(skip))
       .lean();
-
-      console.log(submissions.length, "submissions retrieved for userId:", userId);
-
-    // Attach latest review notes (if any) from Review collection for each submission
     try {
       const submissionIds = Array.isArray(submissions) ? submissions.map(s => s._id).filter(Boolean) : [];
       if (submissionIds.length > 0) {
-        // Load reviews for these submissions ordered by newest first and pick the first per submission
         const reviews = await Review.find({ submissionId: { $in: submissionIds } })
           .sort({ createdAt: -1 })
           .lean();
@@ -450,7 +445,6 @@ class SubmissionService {
           s.revisionNotes = r ? (r.reviewNotes || '') : '';
         });
       } else {
-        // Ensure property exists for consistency
         (submissions || []).forEach(s => { s.revisionNotes = ''; });
       }
     } catch (err) {
@@ -461,7 +455,6 @@ class SubmissionService {
     return submissions;
   }
 
-  // New: find a published submission by its SEO slug and return populated contents/tags
   static async getBySlug(slug) {
     if (!slug || typeof slug !== 'string') {
       throw new Error('Slug is required');
@@ -922,6 +915,7 @@ class SubmissionService {
     const submissionMeta = seoData?.submissionMeta ?? {};
     const perContentTags = seoData?.perContentTags ?? {};
     const perContentMeta = seoData?.perContentMeta ?? {};
+    const perContentBody = seoData?.perContentBody ?? {};
     const keywords = seoData.keywords || submissionMeta.keywords || [];
 
     // --- Slug uniqueness check (before any writes) ---
@@ -949,14 +943,23 @@ class SubmissionService {
 
     // Update per-content tags and content-level SEO
     try {
-      // Collect all content ids referenced in either tags or meta
+      // Collect all content ids referenced in either tags, meta, or body edits
       const contentIdSet = new Set([
         ...Object.keys(perContentTags),
-        ...Object.keys(perContentMeta)
+        ...Object.keys(perContentMeta),
+        ...Object.keys(perContentBody)
       ]);
 
       for (const contentId of contentIdSet) {
         const updateFields = {};
+
+        // --- Body / title / footnotes edits ---
+        const bodyEdit = perContentBody[contentId];
+        if (bodyEdit) {
+          if (typeof bodyEdit.body === 'string') updateFields.body = bodyEdit.body;
+          if (typeof bodyEdit.title === 'string' && bodyEdit.title.trim()) updateFields.title = bodyEdit.title.trim();
+          if (typeof bodyEdit.footnotes === 'string') updateFields.footnotes = bodyEdit.footnotes;
+        }
 
         // --- Tags ---
         const tagsForContent = Array.isArray(perContentTags[contentId])

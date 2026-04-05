@@ -691,6 +691,119 @@ router.get('/drafts/my', authenticateUser, validatePagination, async (req, res) 
   }
 });
 
+// POST /api/submissions/drafts - Create or update a draft
+router.post('/drafts', authenticateUser, async (req, res) => {
+  try {
+    if (!req.user?.userId) return res.status(401).json({ message: 'User not authenticated' });
+
+    const { title, description, submissionType, contents, draftId } = req.body;
+
+    const sanitizedContents = Array.isArray(contents)
+      ? contents.map(c => ({
+          title: c.title || '',
+          body: c.body || '',
+          type: c.type || submissionType || '',
+          footnotes: c.footnotes || '',
+          seo: c.seo || {}
+        }))
+      : [];
+
+    // If a draftId is provided, update the existing draft
+    if (draftId) {
+      const existing = await Submission.findOne({
+        _id: draftId,
+        userId: req.user.userId,
+        status: SUBMISSION_STATUS.DRAFT
+      });
+
+      if (!existing) {
+        return res.status(404).json({ message: 'Draft not found or does not belong to you' });
+      }
+
+      existing.title = title || existing.title;
+      existing.description = description || existing.description;
+      existing.submissionType = submissionType || existing.submissionType;
+      existing.contents = sanitizedContents.length ? sanitizedContents : existing.contents;
+      existing.updatedAt = new Date();
+
+      await existing.save();
+
+      return res.json({
+        message: 'Draft updated successfully',
+        draft: { id: existing._id, ...existing.toObject() }
+      });
+    }
+
+    // Otherwise create a new draft
+    const draft = await Submission.create({
+      title: title || 'Untitled Draft',
+      description: description || '',
+      submissionType: submissionType || '',
+      contents: sanitizedContents,
+      userId: req.user.userId,
+      authorId: req.user.userId,
+      status: SUBMISSION_STATUS.DRAFT
+    });
+
+    return res.status(201).json({
+      message: 'Draft saved successfully',
+      draft: { id: draft._id, ...draft.toObject() }
+    });
+  } catch (error) {
+    console.error('Error in POST /drafts:', error);
+    res.status(500).json({ message: 'Error saving draft', error: error.message });
+  }
+});
+
+// POST /api/submissions/drafts/:id/submit - Promote a draft to a real submission
+router.post('/drafts/:id/submit', authenticateUser, validateObjectId('id'), async (req, res) => {
+  try {
+    if (!req.user?.userId) return res.status(401).json({ message: 'User not authenticated' });
+
+    const draft = await Submission.findOne({
+      _id: req.params.id,
+      userId: req.user.userId,
+      status: SUBMISSION_STATUS.DRAFT
+    });
+
+    if (!draft) {
+      return res.status(404).json({ message: 'Draft not found or does not belong to you' });
+    }
+
+    draft.status = SUBMISSION_STATUS.PENDING_REVIEW;
+    draft.submittedAt = new Date();
+    await draft.save();
+
+    const populated = await SubmissionService.getSubmissionWithContent(draft._id);
+    return res.json({ message: 'Draft submitted for review successfully', submission: populated });
+  } catch (error) {
+    console.error('Error in POST /drafts/:id/submit:', error);
+    res.status(500).json({ message: 'Error submitting draft', error: error.message });
+  }
+});
+
+// DELETE /api/submissions/drafts/:id - Delete a draft
+router.delete('/drafts/:id', authenticateUser, validateObjectId('id'), async (req, res) => {
+  try {
+    if (!req.user?.userId) return res.status(401).json({ message: 'User not authenticated' });
+
+    const draft = await Submission.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.user.userId,
+      status: SUBMISSION_STATUS.DRAFT
+    });
+
+    if (!draft) {
+      return res.status(404).json({ message: 'Draft not found or does not belong to you' });
+    }
+
+    return res.json({ message: 'Draft deleted successfully' });
+  } catch (error) {
+    console.error('Error in DELETE /drafts/:id:', error);
+    res.status(500).json({ message: 'Error deleting draft', error: error.message });
+  }
+});
+
 // GET /api/submissions/user/:userId - Get user's submissions
 router.get('/user/:userId', validateObjectId('userId'), validatePagination, async (req, res) => {
   try {
@@ -1225,19 +1338,29 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    // Sanitize contents if present (same structure used by create endpoint)
-    if (Array.isArray(req.body.contents)) {
-      req.body.contents = req.body.contents.map(c => ({
-        title: c.title,
-        body: c.body,
-        type: c.type,
-        footnotes: c.footnotes || '',
-        seo: c.seo || {}
-      }));
+    // Update existing Content documents if contents array is provided
+    if (Array.isArray(req.body.contents) && req.body.contents.length > 0) {
+      const Content = require('../models/Content');
+      const incomingContents = req.body.contents;
+
+      for (const incoming of incomingContents) {
+        const contentId = incoming._id || incoming.id;
+        if (contentId && submission.contentIds && submission.contentIds.includes(String(contentId))) {
+          // Update existing content document
+          await Content.findByIdAndUpdate(String(contentId), {
+            $set: {
+              title: incoming.title || '',
+              body: incoming.body || '',
+              footnotes: incoming.footnotes || '',
+              type: incoming.type || submission.submissionType
+            }
+          });
+        }
+      }
     }
 
-    // Whitelist updatable fields for resubmission
-    const updatable = ['title', 'description', 'excerpt', 'contents', 'submissionType', 'seo', 'imageUrl', 'revisionNotes'];
+    // Whitelist updatable top-level fields for resubmission (not contents — handled above via Content docs)
+    const updatable = ['title', 'description', 'excerpt', 'submissionType', 'seo', 'imageUrl', 'revisionNotes'];
     updatable.forEach(field => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         submission[field] = req.body[field];
