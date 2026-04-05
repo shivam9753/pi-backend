@@ -127,6 +127,10 @@ const submissionSchema = new mongoose.Schema({
     type: Number,
     default: 0,
     min: 0
+  },
+  publishedAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true,
@@ -139,11 +143,11 @@ submissionSchema.index({ userId: 1 });
 submissionSchema.index({ status: 1 });
 submissionSchema.index({ submissionType: 1 });
 submissionSchema.index({ createdAt: -1 });
-submissionSchema.index({ reviewedAt: -1 });
+submissionSchema.index({ publishedAt: -1 });
 submissionSchema.index({ isFeatured: 1 });
 submissionSchema.index({ status: 1, submissionType: 1 });
 submissionSchema.index({ status: 1, isFeatured: 1 });
-submissionSchema.index({ status: 1, reviewedAt: -1 });
+submissionSchema.index({ status: 1, publishedAt: -1 });
 submissionSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
 submissionSchema.index({ viewCount: -1 });
 submissionSchema.index({ status: 1, viewCount: -1 });
@@ -222,17 +226,9 @@ submissionSchema.methods.addHistoryEntry = async function(action, newStatus, use
     timestamp: new Date()
   });
   this.status = newStatus;
-  if (['approved', 'rejected', 'needs_changes', 'shortlisted'].includes(action)) {
-    this.reviewedAt = new Date();
-    this.reviewedBy = userId;
-  }
-  if (action === 'published') {
+  if (action === 'published' && !this.publishedAt) {
     // Set publishedAt only the first time it is published (preserve original publish date on republish)
-    if (!this.publishedAt) {
-      this.publishedAt = new Date();
-    }
-    this.reviewedAt = this.publishedAt;
-    this.reviewedBy = userId;
+    this.publishedAt = new Date();
   }
 
   // Handle assignment for in_progress status
