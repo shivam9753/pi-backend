@@ -1364,12 +1364,17 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
     }
 
     // Whitelist updatable top-level fields for resubmission (not contents — handled above via Content docs)
-    const updatable = ['title', 'description', 'excerpt', 'submissionType', 'seo', 'imageUrl'];
+    const updatable = ['title', 'description', 'submissionType', 'seo', 'imageUrl'];
     updatable.forEach(field => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         submission[field] = req.body[field];
       }
     });
+    // Cap excerpt to schema maxlength to avoid validation errors
+    if (Object.prototype.hasOwnProperty.call(req.body, 'excerpt')) {
+      const raw = String(req.body.excerpt || '').trim();
+      submission.excerpt = raw.length <= 300 ? raw : raw.slice(0, 300).trimEnd() + '…';
+    }
 
     // Use model method to set status and record audit properly
     try {

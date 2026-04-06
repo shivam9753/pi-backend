@@ -235,8 +235,13 @@ submissionSchema.statics.findBySlug = async function(slug) {
 };
 
 // Static helper: generate a short excerpt from contents
-submissionSchema.statics.generateExcerpt = function(contents, maxLength = 200) {
-  return "";
+submissionSchema.statics.generateExcerpt = function(contents, maxLength = 100) {
+  if (!Array.isArray(contents) || contents.length === 0) return '';
+  const body = (contents[0].body || '').trim();
+  if (!body) return '';
+  // Strip HTML tags if any
+  const plain = body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return plain.length <= maxLength ? plain : plain.slice(0, maxLength).trimEnd() + '…';
 };
 
 module.exports = mongoose.model('Submission', submissionSchema);

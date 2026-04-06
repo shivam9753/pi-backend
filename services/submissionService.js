@@ -977,7 +977,8 @@ class SubmissionService {
       submission.description = String(seoData.description || submission.description || '').trim();
     }
     if (Object.prototype.hasOwnProperty.call(seoData, 'excerpt')) {
-      submission.excerpt = String(seoData.excerpt || submission.excerpt || '').trim();
+      const raw = String(seoData.excerpt || submission.excerpt || '').trim();
+      submission.excerpt = raw.length <= 300 ? raw : raw.slice(0, 300).trimEnd() + '…';
     }
 
     // Mark submission as published
