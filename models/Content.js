@@ -20,7 +20,6 @@ const contentSchema = new mongoose.Schema({
   tags: [{
     type: String,
     ref: 'Tag',
-    index: true,
     default: []
   }],
   footnotes: {
@@ -53,8 +52,7 @@ const contentSchema = new mongoose.Schema({
   }],
   isFeatured: {
     type: Boolean,
-    default: false,
-    index: true
+    default: false
   },
   featuredAt: {
     type: Date
@@ -67,16 +65,13 @@ const contentSchema = new mongoose.Schema({
   submissionId: {
     type: String,
     ref: 'Submission',
-    required: true,
-    index: true
+    required: true
   },
   seo: {
     slug: {
       type: String,
       trim: true,
       lowercase: true,
-      sparse: true,
-      unique: true,
       match: /^[a-z0-9]+(?:-[a-z0-9]+)*$/
     },
     metaTitle: {
@@ -96,11 +91,6 @@ const contentSchema = new mongoose.Schema({
     }
   }
   
-  // REMOVED REDUNDANT FIELDS:
-  // - userId: Derive from submissionId.userId
-  // - isPublished: Derive from submissionId.status === 'published'
-  // - publishedAt: Use submissionId.publishedAt
-  // - type: Use submissionId.submissionType
   
 }, {
   timestamps: true,
@@ -110,34 +100,9 @@ const contentSchema = new mongoose.Schema({
 
 // Indexes
 contentSchema.index({ tags: 1 });
-contentSchema.index({ createdAt: -1 });
 contentSchema.index({ submissionId: 1 });
-// Featured content indexes
-contentSchema.index({ isFeatured: 1 });
 contentSchema.index({ isFeatured: 1, featuredAt: -1 });
-// SEO indexes
 contentSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
-
-// Virtual fields to derive publication status from submission
-contentSchema.virtual('isPublished').get(function() {
-  // This will be populated when we do lookups
-  return this.submission?.status === 'published';
-});
-
-contentSchema.virtual('publishedAt').get(function() {
-  // This will be populated when we do lookups
-  return this.submission?.publishedAt;
-});
-
-contentSchema.virtual('type').get(function() {
-  // This will be populated when we do lookups
-  return this.submission?.submissionType;
-});
-
-contentSchema.virtual('userId').get(function() {
-  // This will be populated when we do lookups
-  return this.submission?.userId;
-});
 
 // Static methods
 contentSchema.statics.createMany = async function(contents) {
@@ -177,7 +142,6 @@ contentSchema.statics.findWithUser = function(id) {
   ]);
 };
 
-// Get published content with submission status check
 contentSchema.statics.findPublished = function(filters = {}) {
   return this.aggregate([
     { $match: filters },
@@ -211,7 +175,6 @@ contentSchema.statics.findPublished = function(filters = {}) {
   ]);
 };
 
-// Get content by user (via submission)
 contentSchema.statics.findByUser = function(userId, filters = {}) {
   return this.aggregate([
     { $match: filters },
@@ -249,7 +212,6 @@ contentSchema.statics.prepareForStorage = function(contentData) {
   delete prepared.isPublished;
   delete prepared.publishedAt;
   delete prepared.type;
-  
   return prepared;
 };
 
@@ -270,8 +232,6 @@ contentSchema.statics.addS3Image = async function(contentId, imageData) {
   };
   
   content.images.push(imageRecord);
-  content.hasInlineImages = true;
-  
   return await content.save();
 };
 
@@ -284,11 +244,6 @@ contentSchema.statics.removeS3Image = async function(contentId, imageId) {
   
   const removedImage = content.images[imageIndex];
   content.images.splice(imageIndex, 1);
-  
-  if (content.images.length === 0) {
-    content.hasInlineImages = false;
-  }
-  
   await content.save();
   return removedImage.s3Key; // Return S3 key for deletion
 };

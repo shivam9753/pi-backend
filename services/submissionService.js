@@ -145,9 +145,8 @@ class SubmissionService {
 
     // Use .select() to only fetch required fields - exclude large fields like description
     const submissions = await Submission.find(query)
-      .select('title excerpt imageUrl reviewedAt submissionType tags userId reviewedBy')
+      .select('title excerpt imageUrl submissionType userId')
       .populate('userId', 'name username')
-      .populate('reviewedBy', 'username')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip))
@@ -180,14 +179,14 @@ class SubmissionService {
   }
 
   static async getPublishedSubmissions(filters = {}) {
-    const { type, limit = 20, skip = 0, sortBy = 'reviewedAt', order = 'desc' } = filters;
+    const { type, limit = 20, skip = 0, sortBy = 'publishedAt', order = 'desc' } = filters;
     
     const query = { status: SUBMISSION_STATUS.PUBLISHED };
     if (type) query.submissionType = type;
 
     // Use .select() to exclude large fields like description and contentIds for listing
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt userId seo')
+      .select('title submissionType excerpt imageUrl publishedAt createdAt userId seo')
       .populate('userId', 'name username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
@@ -203,7 +202,7 @@ class SubmissionService {
         submissionType: sub.submissionType,
         excerpt: sub.excerpt,
         imageUrl: sub.imageUrl,
-        publishedAt: sub.reviewedAt || sub.createdAt,
+        publishedAt: sub.publishedAt || sub.createdAt,
         slug: sub.seo?.slug,
         seo: sub.seo,
         author: {
@@ -227,8 +226,7 @@ class SubmissionService {
 
   static async getSubmissionWithContent(id) {
     const submission = await Submission.findById(id)
-      .populate('userId', 'name username email profileImage')
-      .populate('reviewedBy', 'username');
+      .populate('userId', 'name username email profileImage');
 
     if (!submission) {
       throw new Error('Submission not found');
@@ -552,9 +550,9 @@ class SubmissionService {
     if (type) query.submissionType = type;
 
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt userId contentIds')
+      .select('title submissionType excerpt imageUrl publishedAt createdAt userId contentIds')
       .populate('userId', 'name username email profileImage')
-      .sort({ reviewedAt: -1 })
+      .sort({ publishedAt: -1 })
       .limit(parseInt(limit))
       .lean(); // Use lean() for better performance
 
@@ -565,7 +563,7 @@ class SubmissionService {
       submissionType: sub.submissionType,
       excerpt: sub.excerpt,
       imageUrl: sub.imageUrl,
-      publishedAt: sub.reviewedAt || sub.createdAt,
+      publishedAt: sub.publishedAt || sub.createdAt,
       author: {
         _id: sub.userId._id,
         name: sub.userId.name,
@@ -637,7 +635,7 @@ class SubmissionService {
     };
 
     const submissions = await Submission.find(query)
-      .select('title submissionType excerpt imageUrl reviewedAt createdAt userId')
+      .select('title submissionType excerpt imageUrl publishedAt createdAt userId')
       .populate('userId', 'name username email profileImage')
       .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
       .limit(parseInt(limit))
@@ -653,7 +651,7 @@ class SubmissionService {
         submissionType: sub.submissionType,
         excerpt: sub.excerpt,
         imageUrl: sub.imageUrl,
-        publishedAt: sub.reviewedAt || sub.createdAt,
+        publishedAt: sub.publishedAt || sub.createdAt,
         slug: sub.seo?.slug,
         seo: sub.seo,
         author: {

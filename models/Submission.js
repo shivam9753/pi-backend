@@ -108,15 +108,12 @@ submissionSchema.set('strictPopulate', false);
 // Indexes
 submissionSchema.index({ userId: 1 });
 submissionSchema.index({ status: 1 });
-submissionSchema.index({ submissionType: 1 });
 submissionSchema.index({ createdAt: -1 });
 submissionSchema.index({ publishedAt: -1 });
-submissionSchema.index({ isFeatured: 1 });
 submissionSchema.index({ status: 1, submissionType: 1 });
 submissionSchema.index({ status: 1, isFeatured: 1 });
 submissionSchema.index({ status: 1, publishedAt: -1 });
 submissionSchema.index({ 'seo.slug': 1 }, { unique: true, sparse: true });
-submissionSchema.index({ viewCount: -1 });
 submissionSchema.index({ status: 1, viewCount: -1 });
 
 // Methods
@@ -173,7 +170,7 @@ submissionSchema.statics.findTrending = async function(limit = 10, windowDays = 
     if (ids.length === 0) {
       // Fallback: return top submissions by lifetime viewCount
       const fallback = await this.find({ status: 'published' })
-        .sort({ viewCount: -1, reviewedAt: -1 })
+        .sort({ viewCount: -1, publishedAt: -1 })
         .limit(limit)
         .lean();
       return fallback;
@@ -191,7 +188,7 @@ submissionSchema.statics.findTrending = async function(limit = 10, windowDays = 
     // If we still don't have enough results, pad with top viewCount submissions
     if (ordered.length < limit) {
       const extra = await this.find({ status: 'published', _id: { $nin: ordered.map(s => s._id) } })
-        .sort({ viewCount: -1, reviewedAt: -1 })
+        .sort({ viewCount: -1, publishedAt: -1 })
         .limit(limit - ordered.length)
         .lean();
       ordered.push(...extra);
@@ -203,7 +200,7 @@ submissionSchema.statics.findTrending = async function(limit = 10, windowDays = 
     // On error, degrade to simple popular query
     try {
       const fallback = await this.find({ status: 'published' })
-        .sort({ viewCount: -1, reviewedAt: -1 })
+        .sort({ viewCount: -1, publishedAt: -1 })
         .limit(limit)
         .lean();
       return fallback;
