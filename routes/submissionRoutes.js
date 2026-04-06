@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const Submission = require('../models/Submission');
 const SubmissionService = require('../services/submissionService');
+const AuditService = require('../services/auditService');
 const { authenticateUser, requireReviewer, requireWriter, requireAdmin } = require('../middleware/auth');
 const { 
   validateSubmissionCreation, 
@@ -9,7 +10,7 @@ const {
   validateObjectId,
   validatePagination 
 } = require('../middleware/validation');
-const { SUBMISSION_STATUS } = require('../constants/status.constants');
+const { SUBMISSION_STATUS, STATUS_UTILS } = require('../constants/status.constants');
 
 // Import ImageService for S3/local storage handling
 const { ImageService } = require('../config/imageService');
@@ -266,12 +267,11 @@ router.get('/explore', validatePagination, async (req, res) => {
   }
 });
 
-// GET /api/submissions/:id/history - Get submission with full history
+// GET /api/submissions/:id/history - Get full audit trail for a submission
 router.get('/:id/history', authenticateUser, validateObjectId('id'), async (req, res) => {
   try {
     const submission = await Submission.findById(req.params.id)
-      .populate('userId', 'name username email')
-      .populate('history.user', 'name username email');
+      .populate('userId', 'name username email');
     
     if (!submission) {
       return res.status(404).json({ message: 'Submission not found' });
@@ -285,27 +285,24 @@ router.get('/:id/history', authenticateUser, validateObjectId('id'), async (req,
       return res.status(403).json({ message: 'Access denied' });
     }
     
-    // Build complete history including initial submission
-    const history = [
+    // Fetch audit trail from the Audit collection
+    const auditTrail = await AuditService.getTrail(req.params.id);
+
+    // Prepend a synthetic "created" entry using submission.createdAt if not already present
+    const hasCreated = auditTrail.some(e => e.action === 'created' || e.action === 'pending_review');
+    const trail = hasCreated ? auditTrail : [
       {
-        action: 'submitted',
-        status: 'pending_review',
+        action: 'created',
+        resultingStatus: 'draft',
         timestamp: submission.createdAt,
-        user: {
-          _id: submission.userId._id,
-          name: submission.userId.name,
-          username: submission.userId.username,
-          email: submission.userId.email
-        },
+        createdAt: submission.createdAt,
+        userId: { _id: submission.userId._id, name: submission.userId.name, username: submission.userId.username, email: submission.userId.email },
         notes: 'Submission created'
       },
-      ...submission.history
+      ...auditTrail
     ];
     
-    res.json({ 
-      _id: submission._id,
-      history 
-    });
+    res.json({ _id: submission._id, trail });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching submission history', error: error.message });
   }
@@ -773,6 +770,15 @@ router.post('/drafts/:id/submit', authenticateUser, validateObjectId('id'), asyn
     draft.status = SUBMISSION_STATUS.PENDING_REVIEW;
     draft.submittedAt = new Date();
     await draft.save();
+
+    // Audit the submit event
+    await AuditService.log({
+      submissionId: draft._id,
+      action: 'pending_review',
+      resultingStatus: SUBMISSION_STATUS.PENDING_REVIEW,
+      userRole: req.user.role,
+      notes: 'Submitted for review'
+    });
 
     const populated = await SubmissionService.getSubmissionWithContent(draft._id);
     return res.json({ message: 'Draft submitted for review successfully', submission: populated });
@@ -1268,7 +1274,6 @@ router.patch('/:id/seo', authenticateUser, requireReviewer, validateObjectId('id
 router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId('id'), async (req, res) => {
   try {
     const { id } = req.params;
-    const notes = req.body && req.body.notes ? String(req.body.notes).trim() : null;
 
     const submission = await Submission.findById(id);
     if (!submission) return res.status(404).json({ success: false, message: 'Submission not found' });
@@ -1277,7 +1282,6 @@ router.patch('/:id/unpublish', authenticateUser, requireAdmin, validateObjectId(
     submission.status = SUBMISSION_STATUS.ACCEPTED || 'accepted';
     submission.reviewedAt = null;
     submission.reviewedBy = null;
-    if (notes) submission.revisionNotes = notes;
 
     await submission.save();
 
@@ -1360,23 +1364,35 @@ router.put('/:id/resubmit', authenticateUser, validateObjectId('id'), validateSu
     }
 
     // Whitelist updatable top-level fields for resubmission (not contents — handled above via Content docs)
-    const updatable = ['title', 'description', 'excerpt', 'submissionType', 'seo', 'imageUrl', 'revisionNotes'];
+    const updatable = ['title', 'description', 'excerpt', 'submissionType', 'seo', 'imageUrl'];
     updatable.forEach(field => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         submission[field] = req.body[field];
       }
     });
 
-    // Use model method to set status and record history properly
+    // Use model method to set status and record audit properly
     try {
-      await submission.changeStatus('resubmitted', String(req.user._id), req.body.revisionNotes || 'Resubmitted by author');
+      const fromStatus = submission.status;
+      if (fromStatus !== 'resubmitted' && !STATUS_UTILS.isValidStatusTransition(fromStatus, 'resubmitted')) {
+        return res.status(400).json({ success: false, message: `Invalid status transition from ${fromStatus} to resubmitted` });
+      }
+      submission.status = 'resubmitted';
+      await submission.save();
+      await AuditService.log({
+        submissionId: id,
+        action: 'resubmitted',
+        resultingStatus: 'resubmitted',
+        userId: String(req.user._id),
+        userRole: req.user.role,
+        notes: req.body.revisionNotes || 'Resubmitted by author'
+      });
     } catch (statusErr) {
-      // If changeStatus fails (invalid transition), still attempt to save updated fields and return error
       console.error('Error changing status to resubmitted:', statusErr);
       return res.status(400).json({ success: false, message: statusErr.message || 'Invalid status transition' });
     }
 
-    // Ensure any other changes are persisted (changeStatus performs a save but call save again to be safe)
+    // Ensure any other changes are persisted (save again to be safe)
     await submission.save();
 
     // Return the updated submission (lean/populate as needed by clients)

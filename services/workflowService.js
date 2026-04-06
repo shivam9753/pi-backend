@@ -1,5 +1,7 @@
 const Submission = require('../models/Submission');
 const User = require('../models/User');
+const AuditService = require('./auditService');
+const { STATUS_UTILS } = require('../constants/status.constants');
 
 class WorkflowService {
   /**
@@ -9,30 +11,28 @@ class WorkflowService {
     return {
       // Author transitions
       author: {
-        'draft': ['submitted'],
-        'needs_changes': ['draft', 'submitted']
+        'draft': ['pending_review'],
+        'needs_revision': ['draft', 'pending_review']
       },
       
       // Writer transitions
       writer: {
-        'submitted': ['in_progress'],
-        'in_progress': ['shortlisted', 'needs_changes', 'rejected']
+        'pending_review': ['in_progress'],
+        'in_progress': ['needs_revision', 'rejected']
       },
       
       // Reviewer transitions (includes all writer powers)
       reviewer: {
-        'submitted': ['in_progress'],
-        'in_progress': ['shortlisted', 'needs_changes', 'rejected', 'approved'],
-        'shortlisted': ['in_progress', 'approved', 'needs_changes', 'rejected']
+        'pending_review': ['in_progress'],
+        'in_progress': ['needs_revision', 'rejected', 'accepted']
       },
       
       // Admin transitions (includes all powers)
       admin: {
-        'submitted': ['in_progress'],
-        'in_progress': ['shortlisted', 'needs_changes', 'rejected', 'approved'],
-        'shortlisted': ['in_progress', 'approved', 'needs_changes', 'rejected'],
-        'approved': ['published', 'needs_changes'],
-        'published': ['archived']
+        'pending_review': ['in_progress'],
+        'in_progress': ['needs_revision', 'rejected', 'accepted'],
+        'accepted': ['published'],
+        'published': ['accepted']
       }
     };
   }
@@ -97,14 +97,38 @@ class WorkflowService {
       }
 
       // Execute the transition
-      await submission.changeStatus(targetStatus, { _id: userId, role: userRole }, notes);
+      const fromStatus = submission.status;
+      if (fromStatus !== targetStatus && !STATUS_UTILS.isValidStatusTransition(fromStatus, targetStatus)) {
+        throw new Error(`Invalid status transition from ${fromStatus} to ${targetStatus}`);
+      }
+
+      // Handle assignment fields
+      if (targetStatus === 'in_progress') {
+        submission.assignedTo = userId;
+        submission.assignedAt = new Date();
+      } else if (['accepted', 'rejected', 'needs_revision', 'published', 'unpublished'].includes(targetStatus)) {
+        submission.assignedTo = null;
+        submission.assignedAt = null;
+      }
+
+      submission.status = targetStatus;
+      await submission.save();
+
+      const action = STATUS_UTILS.getActionForStatus(targetStatus) || targetStatus;
+      await AuditService.log({
+        submissionId,
+        action,
+        resultingStatus: targetStatus,
+        userId,
+        userRole,
+        notes
+      });
 
       // Return updated submission with populated fields
       return await Submission.findById(submissionId)
         .populate('userId', 'username email profileImage')
         .populate('assignedTo', 'username email profileImage role')
-        .populate('reviewedBy', 'username email profileImage role')
-        .populate('history.user', 'username role');
+        .populate('reviewedBy', 'username email profileImage role');
 
     } catch (error) {
       throw new Error(`Workflow transition failed: ${error.message}`);
@@ -121,15 +145,15 @@ class WorkflowService {
         return { userId: userId };
       
       case 'writer':
-        // Writers see submitted and in_progress submissions
+        // Writers see pending_review and in_progress submissions
         return { 
-          status: { $in: ['submitted', 'in_progress'] }
+          status: { $in: ['pending_review', 'in_progress'] }
         };
       
       case 'reviewer':
-        // Reviewers see submitted, in_progress, and shortlisted submissions
+        // Reviewers see pending_review and in_progress submissions
         return { 
-          status: { $in: ['submitted', 'in_progress', 'shortlisted'] }
+          status: { $in: ['pending_review', 'in_progress'] }
         };
       
       case 'admin':
@@ -160,12 +184,12 @@ class WorkflowService {
       if (!isOwner) return [];
       
       if (currentStatus === 'draft') {
-        actions.push({ action: 'submit', label: 'Submit for Review', targetStatus: 'submitted' });
+        actions.push({ action: 'submit', label: 'Submit for Review', targetStatus: 'pending_review' });
       }
-      if (currentStatus === 'needs_changes') {
+      if (currentStatus === 'needs_revision') {
         actions.push(
           { action: 'edit', label: 'Edit Draft', targetStatus: 'draft' },
-          { action: 'resubmit', label: 'Resubmit', targetStatus: 'submitted' }
+          { action: 'resubmit', label: 'Resubmit', targetStatus: 'pending_review' }
         );
       }
       return actions;
@@ -175,7 +199,7 @@ class WorkflowService {
     if (['writer', 'reviewer', 'admin'].includes(userRole)) {
       
       // Move to In Progress (only if not already assigned)
-      if (currentStatus === 'submitted' && !submission.assignedTo) {
+      if (currentStatus === 'pending_review' && !submission.assignedTo) {
         actions.push({ action: 'take', label: 'Take In Progress', targetStatus: 'in_progress' });
       }
 
@@ -183,40 +207,30 @@ class WorkflowService {
       if (currentStatus === 'in_progress' && isAssignedToUser) {
         if (userRole === 'writer') {
           actions.push(
-            { action: 'shortlist', label: 'Shortlist', targetStatus: 'shortlisted' },
-            { action: 'needs_changes', label: 'Needs Changes', targetStatus: 'needs_changes' },
+            { action: 'needs_revision', label: 'Needs Revision', targetStatus: 'needs_revision' },
             { action: 'reject', label: 'Reject', targetStatus: 'rejected' }
           );
         }
         
         if (['reviewer', 'admin'].includes(userRole)) {
           actions.push(
-            { action: 'shortlist', label: 'Shortlist', targetStatus: 'shortlisted' },
-            { action: 'approve', label: 'Approve', targetStatus: 'approved' },
-            { action: 'needs_changes', label: 'Needs Changes', targetStatus: 'needs_changes' },
+            { action: 'accept', label: 'Accept', targetStatus: 'accepted' },
+            { action: 'needs_revision', label: 'Needs Revision', targetStatus: 'needs_revision' },
             { action: 'reject', label: 'Reject', targetStatus: 'rejected' }
           );
         }
 
         // Release assignment
-        actions.push({ action: 'release', label: 'Release Assignment', targetStatus: 'submitted' });
-      }
-
-      // Reviewers and admins can act on shortlisted content
-      if (currentStatus === 'shortlisted' && ['reviewer', 'admin'].includes(userRole)) {
-        actions.push(
-          { action: 'take', label: 'Take In Progress', targetStatus: 'in_progress' },
-          { action: 'approve', label: 'Approve', targetStatus: 'approved' }
-        );
+        actions.push({ action: 'release', label: 'Release Assignment', targetStatus: 'pending_review' });
       }
 
       // Admin-only actions
       if (userRole === 'admin') {
-        if (currentStatus === 'approved') {
+        if (currentStatus === 'accepted') {
           actions.push({ action: 'publish', label: 'Publish', targetStatus: 'published' });
         }
         if (currentStatus === 'published') {
-          actions.push({ action: 'archive', label: 'Archive', targetStatus: 'archived' });
+          actions.push({ action: 'unpublish', label: 'Unpublish', targetStatus: 'accepted' });
         }
       }
     }
@@ -280,7 +294,7 @@ class WorkflowService {
         ]
       },
       {
-        $set: { status: 'submitted' },
+        $set: { status: 'pending_review' },
         $unset: { assignedTo: 1, assignedAt: 1 }
       }
     );

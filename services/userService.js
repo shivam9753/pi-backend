@@ -229,20 +229,16 @@ class UserService {
     // Delete user's submissions and content
     const Submission = require('../models/Submission');
     const Content = require('../models/Content');
-    const Review = require('../models/Review');
+    const AuditService = require('./auditService');
 
     const userSubmissions = await Submission.find({ userId });
     const contentIds = userSubmissions.reduce((ids, sub) => 
       ids.concat(sub.contentIds || []), []
     );
+    const submissionIds = userSubmissions.map(s => s._id);
 
-    // Delete in order: reviews, content, submissions, user
-    await Review.deleteMany({ 
-      $or: [
-        { reviewerId: userId },
-        { submissionId: { $in: userSubmissions.map(s => s._id) } }
-      ]
-    });
+    // Delete in order: audit entries, content, submissions, user
+    await AuditService.deleteBySubmissionIds(submissionIds);
     
     if (contentIds.length > 0) {
       await Content.deleteMany({ _id: { $in: contentIds } });

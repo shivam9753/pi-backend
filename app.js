@@ -46,7 +46,7 @@ DevValidation.initializeChecks();
 require('./models/User');
 require('./models/Submission');
 require('./models/Content');
-require('./models/Review');
+require('./models/Audit');
 
 // Import route modules
 const userRoutes = require('./routes/userRoutes');

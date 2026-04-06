@@ -5,7 +5,7 @@ const { authenticateUser, requireRole } = require('../middleware/auth');
 const Submission = require('../models/Submission');
 const Content = require('../models/Content');
 const User = require('../models/User');
-const Review = require('../models/Review');
+const Audit = require('../models/Audit');
 const DailyView = require('../models/DailyView');
 
 // Middleware: All analytics endpoints require admin/reviewer role

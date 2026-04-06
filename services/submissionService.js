@@ -1,6 +1,7 @@
 const Submission = require('../models/Submission');
 const Content = require('../models/Content');
-const Review = require('../models/Review');
+const Audit = require('../models/Audit');
+const AuditService = require('./auditService');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const Tag = require('../models/Tag');
@@ -79,7 +80,16 @@ class SubmissionService {
         session.endSession();
       }
 
-      return updatedSubmission || savedSubmission;
+      const result = updatedSubmission || savedSubmission;
+      // Log the 'pending_review' audit event (non-blocking)
+      AuditService.log({
+        submissionId: result._id,
+        action: 'pending_review',
+        resultingStatus: result.status || SUBMISSION_STATUS.DRAFT,
+        userId: actualUserId,
+        notes: 'Submission submitted'
+      }).catch(e => console.warn('Audit log failed for createSubmission:', e?.message));
+      return result;
     } catch (err) {
       // Abort transaction if something went wrong
       if (session) {
@@ -110,7 +120,15 @@ class SubmissionService {
         // Use findByIdAndUpdate (atomic single write) to ensure contentIds are written even if previous save succeeded
         await Submission.findByIdAndUpdate(savedSubmissionFallback._id, { $set: { contentIds, excerpt } });
 
-        return await Submission.findById(savedSubmissionFallback._id);
+        const fallbackResult = await Submission.findById(savedSubmissionFallback._id);
+        AuditService.log({
+          submissionId: fallbackResult._id,
+          action: 'pending_review',
+          resultingStatus: fallbackResult.status || SUBMISSION_STATUS.DRAFT,
+          userId: actualUserId,
+          notes: 'Submission submitted'
+        }).catch(e => console.warn('Audit log failed for createSubmission fallback:', e?.message));
+        return fallbackResult;
       } catch (fallbackErr) {
         // If fallback fails, log and throw the original error for upper layers to handle
         console.error('SubmissionService.createSubmission fallback failed:', fallbackErr && (fallbackErr.message || fallbackErr));
@@ -425,33 +443,6 @@ class SubmissionService {
       .limit(Number(limit))
       .skip(Number(skip))
       .lean();
-    try {
-      const submissionIds = Array.isArray(submissions) ? submissions.map(s => s._id).filter(Boolean) : [];
-      if (submissionIds.length > 0) {
-        const reviews = await Review.find({ submissionId: { $in: submissionIds } })
-          .sort({ createdAt: -1 })
-          .lean();
-
-        const latestBySubmission = new Map();
-        for (const r of reviews) {
-          const sid = String(r.submissionId);
-          if (!latestBySubmission.has(sid)) {
-            latestBySubmission.set(sid, r);
-          }
-        }
-
-        submissions.forEach(s => {
-          const r = latestBySubmission.get(String(s._id));
-          s.revisionNotes = r ? (r.reviewNotes || '') : '';
-        });
-      } else {
-        (submissions || []).forEach(s => { s.revisionNotes = ''; });
-      }
-    } catch (err) {
-      console.warn('Failed to attach revision notes to submissions:', err && (err.message || err));
-      (submissions || []).forEach(s => { s.revisionNotes = ''; });
-    }
-
     return submissions;
   }
 
@@ -503,6 +494,33 @@ class SubmissionService {
     return await submission.save();
   }
 
+  /**
+   * Update Author Trust Score for a review decision.
+   * Called from reviewRoutes after a status transition.
+   */
+  static async updateAuthorAts(submissionId, reviewStatus) {
+    try {
+      const submission = await Submission.findById(submissionId).select('userId').lean();
+      if (!submission) return;
+      const author = await User.findById(submission.userId);
+      if (!author) return;
+
+      const delta = {
+        [SUBMISSION_STATUS.ACCEPTED]: 6,
+        [SUBMISSION_STATUS.NEEDS_REVISION]: 1,
+        [SUBMISSION_STATUS.REJECTED]: -4
+      }[reviewStatus] || 0;
+
+      if (delta !== 0) {
+        const current = typeof author.ats === 'number' ? author.ats : 50;
+        author.ats = Math.max(0, Math.min(100, current + delta));
+        await author.save();
+      }
+    } catch (atsError) {
+      console.warn('Failed to update author ATS:', atsError);
+    }
+  }
+
   static async reviewSubmission(id, reviewData) {
     const submission = await Submission.findById(id);
     if (!submission) {
@@ -512,7 +530,6 @@ class SubmissionService {
     // Allow reviewing submissions in various states for different actions
     const allowedStatuses = [...STATUS_ARRAYS.REVIEWABLE_STATUSES];
     if (reviewData.status === SUBMISSION_STATUS.NEEDS_REVISION) {
-      // For revision requests, allow needs_revision status as well (in case of re-review)
       allowedStatuses.push(SUBMISSION_STATUS.NEEDS_REVISION);
     }
     
@@ -520,50 +537,12 @@ class SubmissionService {
       throw new Error(`Only submissions with status ${allowedStatuses.join(', ')} can be reviewed`);
     }
 
-    // Create review record
-    const review = new Review({
-      submissionId: id,
-      reviewerId: reviewData.reviewerId,
-      status: reviewData.status,
-      reviewNotes: reviewData.reviewNotes || '',
-      rating: reviewData.rating
-    });
-
-    await review.save();
-
-    // Update only review-related fields, not status (let route handle status with history)
+    // Update review-related fields on submission
     submission.reviewedAt = new Date();
     submission.reviewedBy = reviewData.reviewerId;
     await submission.save();
 
-    // Update author's ATS (Author Trust Score) for specific review outcomes
-    // This update happens in the same request as the review action and is defensive
-    try {
-      const authorId = submission.userId;
-      if (authorId) {
-        const author = await User.findById(authorId);
-        if (author) {
-          let delta = 0;
-
-          if (reviewData.status === SUBMISSION_STATUS.ACCEPTED) delta = 6;
-          else if (reviewData.status === SUBMISSION_STATUS.NEEDS_REVISION) delta = 1;
-          else if (reviewData.status === SUBMISSION_STATUS.REJECTED) delta = -4;
-
-          if (delta !== 0) {
-            const currentATS = (typeof author.ats === 'number') ? author.ats : 50;
-            let newATS = currentATS + delta;
-            newATS = Math.max(0, Math.min(100, newATS));
-            author.ats = newATS;
-            await author.save();
-          }
-        }
-      }
-    } catch (atsError) {
-      // Do not block the review flow if ATS update fails; log and continue
-      console.warn('Failed to update author ATS:', atsError);
-    }
-
-    return { submission, review };
+    return { submission };
   }
 
   static async getFeaturedSubmissions(filters = {}) {
@@ -713,8 +692,8 @@ class SubmissionService {
 
       const deleteResult = await Content.deleteMany({ $or: query });
 
-      // Delete associated reviews
-      await Review.deleteMany({ submissionId: id });
+      // Delete associated reviews (now Audit entries)
+      await AuditService.deleteBySubmissionIds([id]);
 
       // Delete submission
       await Submission.findByIdAndDelete(id);
@@ -751,8 +730,8 @@ class SubmissionService {
         session ? { session } : undefined
       );
 
-      // Delete any reviews linked to these submissions
-      const reviewDeleteResult = await Review.deleteMany(
+      // Delete any audit entries linked to these submissions
+      await Audit.deleteMany(
         { submissionId: { $in: uniqueIds } },
         session ? { session } : undefined
       );
@@ -771,8 +750,7 @@ class SubmissionService {
       return {
         message: 'Bulk delete completed',
         deletedSubmissions: typeof submissionDeleteResult.deletedCount === 'number' ? submissionDeleteResult.deletedCount : 0,
-        deletedContents: typeof contentDeleteResult.deletedCount === 'number' ? contentDeleteResult.deletedCount : 0,
-        deletedReviews: typeof reviewDeleteResult.deletedCount === 'number' ? reviewDeleteResult.deletedCount : 0
+        deletedContents: typeof contentDeleteResult.deletedCount === 'number' ? contentDeleteResult.deletedCount : 0
       };
     } catch (err) {
       if (session) {
@@ -1006,8 +984,26 @@ class SubmissionService {
 
     // Mark submission as published
     submission.status = SUBMISSION_STATUS.PUBLISHED;
-    // Set publishedAt only the first time (preserve original publish date on re-publish)
-    if (!submission.publishedAt) submission.publishedAt = new Date();
+    // Preserve publishedAt on re-publish: only set it the first time.
+    // Guard against both undefined AND null (schema default is null).
+    if (!submission.publishedAt || submission.publishedAt === null) {
+      // Check Audit collection for a prior publish event (handles the case where
+      // publishedAt was accidentally nulled on an already-published submission).
+      const wasAlreadyPublished = await AuditService.wasEverPublished(id);
+      submission.publishedAt = wasAlreadyPublished
+        ? (submission.reviewedAt || submission.createdAt || new Date())
+        : new Date();
+    }
+
+    // Write a 'published' or 'republished' audit entry
+    const auditAction = (await AuditService.wasEverPublished(id)) ? 'republished' : 'published';
+    await AuditService.log({
+      submissionId: id,
+      action: auditAction,
+      resultingStatus: SUBMISSION_STATUS.PUBLISHED,
+      userId: publisherId || 'system',
+      notes: 'Published via admin publish flow'
+    });
 
     await submission.save();
 

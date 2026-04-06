@@ -1,6 +1,7 @@
 const Submission = require('../models/Submission');
 const Content = require('../models/Content');
-const Review = require('../models/Review');
+const Audit = require('../models/Audit');
+const AuditService = require('./auditService');
 
 class PurgeService {
   
@@ -113,13 +114,11 @@ class PurgeService {
         submissionId: submission._id
       });
       
-      // Count associated reviews
-      const reviewCount = await Review.countDocuments({
-        submissionId: submission._id
-      });
+      // Count associated audit entries
+      const auditCount = await Audit.countDocuments({ submissionId: submission._id });
 
       preview.contentToDelete += contentCount;
-      preview.reviewsToDelete += reviewCount;
+      preview.reviewsToDelete += auditCount;
       preview.affectedUsers.add(submission.userId.username);
       
       preview.details.push({
@@ -150,7 +149,6 @@ class PurgeService {
       failed: [],
       totalSubmissions: 0,
       totalContent: 0,
-      totalReviews: 0,
       errors: []
     };
 
@@ -174,10 +172,8 @@ class PurgeService {
             submissionId: submission._id
           });
           
-          // Delete associated reviews
-          const deletedReviews = await Review.deleteMany({
-            submissionId: submission._id
-          });
+          // Delete associated audit entries
+          await AuditService.deleteBySubmissionIds([submission._id]);
           
           // Delete submission
           await Submission.findByIdAndDelete(submission._id);
@@ -185,12 +181,10 @@ class PurgeService {
           results.success.push({
             submissionId: submission._id,
             title: submission.title,
-            contentDeleted: deletedContent.deletedCount,
-            reviewsDeleted: deletedReviews.deletedCount
+            contentDeleted: deletedContent.deletedCount
           });
 
           results.totalContent += deletedContent.deletedCount;
-          results.totalReviews += deletedReviews.deletedCount;
           results.totalSubmissions++;
 
         } catch (error) {
@@ -207,7 +201,6 @@ class PurgeService {
       console.log(`🗑️ PURGE EXECUTED by admin ${adminId}:`, {
         submissions: results.totalSubmissions,
         content: results.totalContent,
-        reviews: results.totalReviews,
         failed: results.failed.length
       });
 

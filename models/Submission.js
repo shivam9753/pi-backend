@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
 const { 
   SUBMISSION_STATUS, 
-  STATUS_ARRAYS
+  STATUS_ARRAYS,
+  STATUS_UTILS
 } = require('../constants/status.constants');
 
 const submissionSchema = new mongoose.Schema({
@@ -52,40 +53,6 @@ const submissionSchema = new mongoose.Schema({
   isFeatured: {
     type: Boolean,
     default: false
-  },
-  history: [{
-    action: {
-      type: String,
-      enum: STATUS_ARRAYS.ALL_REVIEW_ACTIONS,
-      required: true
-    },
-    status: {
-      type: String,
-      enum: STATUS_ARRAYS.ALL_SUBMISSION_STATUSES,
-      required: true
-    },
-    timestamp: {
-      type: Date,
-      default: Date.now
-    },
-    user: {
-      type: String,
-      ref: 'User',
-      required: true
-    },
-    userRole: {
-      type: String,
-      enum: STATUS_ARRAYS.ALL_USER_ROLES,
-      required: false
-    },
-    notes: {
-      type: String,
-      default: ''
-    }
-  }],
-  revisionNotes: {
-    type: String,
-    default: ''
   },
   seo: {
     slug: {
@@ -157,126 +124,6 @@ submissionSchema.index({ status: 1, viewCount: -1 });
 submissionSchema.methods.toggleFeatured = async function() {
   this.isFeatured = !this.isFeatured;
   return await this.save();
-};
-
-submissionSchema.methods.addHistoryEntry = async function(action, newStatus, userId, userRole, notes = '') {
-  // Ensure we have a user ID for the history entry
-  if (!userId || (typeof userId === 'string' && userId.trim().length === 0)) {
-    throw new Error('User ID is required for history entry');
-  }
-
-  // Convert userId to string for consistency
-  userId = userId.toString();
-
-  // If userRole is not provided, get it from the user
-  if (!userRole) {
-    try {
-      const User = require('./User');
-      const userData = await User.findById(userId).select('role');
-      if (userData) {
-        userRole = userData.role;
-        console.log('🔧 Found user role for history entry:', userRole);
-      } else {
-        // User not found - this could happen due to data inconsistency after ID migration
-        console.warn(`⚠️ User not found for ID ${userId} during history entry creation. Using fallback role.`);
-
-        // Check if this is an admin/reviewer action by checking the action type
-        if (['approved', 'rejected', 'needs_changes', 'shortlisted', 'published'].includes(action)) {
-          userRole = 'reviewer'; // Safe fallback for review actions
-          console.log('🔧 Using fallback role "reviewer" for review action:', action);
-        } else {
-          userRole = 'user'; // Safe fallback for general user actions
-          console.log('🔧 Using fallback role "user" for action:', action);
-        }
-      }
-    } catch (error) {
-      // Handle database lookup errors more gracefully
-      console.error(`❌ Database error during user lookup for history entry:`, error);
-
-      if (error.name === 'CastError') {
-        throw new Error(`Invalid user ID format: ${userId}`);
-      }
-
-      // For production resilience, use fallback role instead of throwing
-      console.warn(`⚠️ Failed to lookup user for history entry, using fallback role`);
-      userRole = ['approved', 'rejected', 'needs_changes', 'shortlisted', 'published'].includes(action) ? 'reviewer' : 'user';
-      console.log('🔧 Using fallback role:', userRole);
-    }
-  }
-
-  // Validate that the userRole is valid if provided
-  if (userRole) {
-    const { STATUS_ARRAYS } = require('../constants/status.constants');
-    if (!STATUS_ARRAYS.ALL_USER_ROLES.includes(userRole)) {
-      throw new Error(`Invalid userRole: ${userRole}. Must be one of: ${STATUS_ARRAYS.ALL_USER_ROLES.join(', ')}`);
-    }
-  }
-
-  // Final validation before adding to history
-  if (!userId || typeof userId !== 'string' || userId.trim().length === 0) {
-    throw new Error('Valid user ID is required for history entry');
-  }
-
-  this.history.push({
-    action,
-    status: newStatus,
-    user: userId.trim(),
-    userRole, // Will be set from lookup above
-    notes: notes || '',
-    timestamp: new Date()
-  });
-  this.status = newStatus;
-  if (action === 'published' && !this.publishedAt) {
-    // Set publishedAt only the first time it is published (preserve original publish date on republish)
-    this.publishedAt = new Date();
-  }
-
-  // Handle assignment for in_progress status
-  if (action === 'moved_to_in_progress') {
-    this.assignedTo = userId;
-    this.assignedAt = new Date();
-  } else if (['approved', 'rejected', 'needs_changes', 'shortlisted', 'published', 'archived'].includes(action)) {
-    // Clear assignment when moving to final states
-    this.assignedTo = null;
-    this.assignedAt = null;
-  }
-
-  return this;
-};
-
-submissionSchema.methods.changeStatus = async function(newStatus, user, notes = '') {
-  const { STATUS_UTILS } = require('../constants/status.constants');
-
-  if (!newStatus || typeof newStatus !== 'string') {
-    throw new Error('A valid newStatus string is required');
-  }
-
-  if (!STATUS_UTILS.isValidSubmissionStatus(newStatus)) {
-    throw new Error(`Invalid status: ${newStatus}`);
-  }
-
-  const fromStatus = this.status || '';
-  if (fromStatus && fromStatus !== newStatus && !STATUS_UTILS.isValidStatusTransition(fromStatus, newStatus)) {
-    throw new Error(`Invalid status transition from ${fromStatus} to ${newStatus}`);
-  }
-
-  let userId = null;
-  let userRole = null;
-  if (user) {
-    if (typeof user === 'string') {
-      userId = user;
-    } else if (typeof user === 'object') {
-      userId = user._id || user.id || user.userId || null;
-      userRole = user.role || null;
-    }
-  }
-  if (!userId) {
-    throw new Error('User information is required to change status');
-  }
-  let action = STATUS_UTILS.getActionForStatus(newStatus) || newStatus;
-  await this.addHistoryEntry(action, newStatus, String(userId), userRole, notes || '');
-  await this.save();
-  return this;
 };
 
 // Static helper: populate contentIds into content documents (keeps order)
