@@ -60,6 +60,7 @@ const contentRoutes = require('./routes/contentRoutes');
 const tagRoutes = require('./routes/tagRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const publicRoutes = require('./routes/publicRoutes');
+const responseTemplateRoutes = require('./routes/responseTemplateRoutes');
 // const writingProgramRoutes = require('./routes/writingProgramRoutes'); // DEPRECATED - writing program routes unregistered
 // const poetryAnalysis = require('./routes/poetry-analysis'); // DEPRECATED - moved to submissionRoutes
 
@@ -228,7 +229,7 @@ app.use('/api/purge', purgeRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/tags', tagRoutes);
 app.use('/api/analytics', analyticsRoutes);
-// app.use('/api/writing-programs', writingProgramRoutes); // DEPRECATED - writing program routes unregistered
+app.use('/api/response-templates', responseTemplateRoutes);
 app.use('/api/admin', require('./routes/adminRoutes'));
 
 // Sitemap route (public)
