@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const multer = require('multer');
 const Submission = require('../models/Submission');
 const SubmissionService = require('../services/submissionService');
@@ -158,6 +159,7 @@ router.get('/explore', validatePagination, async (req, res) => {
       skip = 0,
       type,
       featured,
+      userId,
       sortBy = 'publishedAt', 
       order = 'desc'
     } = req.query;
@@ -175,6 +177,12 @@ router.get('/explore', validatePagination, async (req, res) => {
     // Apply featured filter
     if (featured === 'true') {
       query.featured = true;
+    }
+
+    // Apply author filter
+    if (userId) {
+      const isObjectId = /^[a-f\d]{24}$/i.test(userId);
+      query.userId = isObjectId ? new mongoose.Types.ObjectId(userId) : userId;
     }
 
     // Build aggregation pipeline for lightweight public data
