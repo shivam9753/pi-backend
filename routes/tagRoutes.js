@@ -2,9 +2,12 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Content = require('../models/Content');
 const Submission = require('../models/Submission');
+const Tag = require('../models/Tag');
 // Analytics model removed — analytics DB dropped
 const { validatePagination } = require('../middleware/validation');
 const { mapSingleTag, filterUnmappedUuids, isUuidTag } = require('../utils/tagMapping');
+const { authenticateUser, requireAdmin } = require('../middleware/auth');
+const tagService = require('../services/tagService');
 
 const router = express.Router();
 
@@ -211,6 +214,57 @@ router.get('/search', async (req, res) => {
   } catch (error) {
     console.error('Error searching tags:', error);
     res.status(500).json({ success: false, message: 'Error searching tags', error: error.message });
+  }
+});
+
+// GET /api/tags/all - Get all tags (admin, no aggregation filter)
+router.get('/all', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { search, limit = 100, skip = 0 } = req.query;
+    const query = search ? { name: { $regex: search.trim(), $options: 'i' } } : {};
+    const total = await Tag.countDocuments(query);
+    const tags = await Tag.find(query)
+      .sort({ name: 1 })
+      .skip(Number(skip))
+      .limit(Number(limit))
+      .lean();
+    res.json({ success: true, tags, total });
+  } catch (error) {
+    console.error('Error fetching all tags:', error);
+    res.status(500).json({ success: false, message: 'Error fetching tags', error: error.message });
+  }
+});
+
+// POST /api/tags - Create a new tag (admin only)
+router.post('/', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name?.trim()) {
+      return res.status(400).json({ success: false, message: 'Tag name is required' });
+    }
+    const tag = await tagService.findOrCreateByName(name.trim());
+    res.status(201).json({ success: true, message: 'Tag created successfully', tag });
+  } catch (error) {
+    console.error('Error creating tag:', error);
+    if (error.code === 11000) {
+      return res.status(409).json({ success: false, message: 'Tag already exists' });
+    }
+    res.status(500).json({ success: false, message: 'Error creating tag', error: error.message });
+  }
+});
+
+// DELETE /api/tags/:id - Delete a tag by ID (admin only)
+router.delete('/:id', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tag = await Tag.findByIdAndDelete(id);
+    if (!tag) {
+      return res.status(404).json({ success: false, message: 'Tag not found' });
+    }
+    res.json({ success: true, message: 'Tag deleted successfully', tag });
+  } catch (error) {
+    console.error('Error deleting tag:', error);
+    res.status(500).json({ success: false, message: 'Error deleting tag', error: error.message });
   }
 });
 
