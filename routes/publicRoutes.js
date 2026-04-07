@@ -105,9 +105,18 @@ router.get('/users/:id/published-works', validateObjectId('id'), validatePaginat
 router.get('/users/:id/briefprofile', validateObjectId('id'), async (req, res) => {
   try {
     const userId = req.params.id;
-    const user = await User.findById(userId).select('name profileImage bio');
+    const user = await User.findById(userId).select('name profileImage bio socialLinks createdAt');
     if (!user) return res.status(404).json({ message: 'User not found' });
-    return res.json({ profile: { _id: user._id, name: user.name, profileImage: user.profileImage, bio: user.bio } });
+    return res.json({
+      profile: {
+        _id: user._id,
+        name: user.name,
+        profileImage: user.profileImage,
+        bio: user.bio,
+        socialLinks: user.socialLinks || {},
+        joinedDate: user.createdAt
+      }
+    });
   } catch (error) {
     console.error('Error fetching public user profile (light):', error);
     return res.status(500).json({ message: 'Error fetching user profile', error: error.message });
