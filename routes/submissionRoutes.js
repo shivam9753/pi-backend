@@ -166,7 +166,8 @@ router.get('/explore', validatePagination, async (req, res) => {
 
     // Build query for published submissions
     const query = {
-      status: 'published'
+      status: 'published',
+      publishedAt: { $exists: true, $ne: null }
     };
 
     // Apply type filter
