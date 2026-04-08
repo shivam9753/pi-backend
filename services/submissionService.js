@@ -1004,6 +1004,15 @@ class SubmissionService {
       notes: 'Published via admin publish flow'
     });
 
+    // Strip timestamp fields that may have been deserialized as Extended JSON objects
+    // (e.g. { '$date': '...' }) which Mongoose cannot cast back to Date on save.
+    if (submission.createdAt && typeof submission.createdAt === 'object' && submission.createdAt['$date']) {
+      submission.createdAt = new Date(submission.createdAt['$date']);
+    }
+    if (submission.updatedAt && typeof submission.updatedAt === 'object' && submission.updatedAt['$date']) {
+      submission.updatedAt = new Date(submission.updatedAt['$date']);
+    }
+
     await submission.save();
 
     // Return populated submission — use the already-saved in-memory document directly
