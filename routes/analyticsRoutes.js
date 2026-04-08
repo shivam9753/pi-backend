@@ -1,24 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose');
 const { authenticateUser, requireRole } = require('../middleware/auth');
 const Submission = require('../models/Submission');
 const Content = require('../models/Content');
-const User = require('../models/User');
-const Audit = require('../models/Audit');
 const DailyView = require('../models/DailyView');
-
-// Middleware: All analytics endpoints require admin/reviewer role
 router.use(authenticateUser);
 router.use(requireRole(['admin', 'reviewer']));
 
-// Helper: compute startDate for period
 function getStartDateForPeriod(period) {
   const now = new Date();
   switch ((period || 'week').toString()) {
     case 'day':
     case 'today':
-      // today's midnight
       return new Date(now.getFullYear(), now.getMonth(), now.getDate());
     case 'week':
       return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -30,11 +23,7 @@ function getStartDateForPeriod(period) {
   }
 }
 
-// GET /analytics/top-content
-// Top performing and trending content (submissions)
-// Supports query params: period=day|week|month|all (default: week), limit, type
-// Responses no longer include recentViews/windowStartTime. Instead, `periodViews` (views in selected period) and `viewCount` (lifetime) are returned.
-router.get('/top-content', async (req, res) => {
+router.get('/top-posts', async (req, res) => {
   try {
     const { period = 'week', limit = 10, type } = req.query;
     const limitNum = Number.parseInt(limit, 10) || 10;
@@ -117,8 +106,6 @@ router.get('/top-content', async (req, res) => {
   }
 });
 
-// GET /analytics/content-types
-// Analytics breakdown by content type (supports period toggle)
 router.get('/content-types', async (req, res) => {
   try {
     const { period = 'month', type } = req.query;
@@ -159,8 +146,6 @@ router.get('/content-types', async (req, res) => {
   }
 });
 
-// GET /analytics/overview
-// Overview metrics: published counts and combined view totals (content + submissions)
 router.get('/overview', async (req, res) => {
   try {
     // published counts
@@ -170,7 +155,18 @@ router.get('/overview', async (req, res) => {
     ]);
 
     const contentViewsAgg = await Content.aggregate([
-      { $match: { status: 'published' } },
+      // Only count views for featured content whose submission is published
+      { $match: { isFeatured: true } },
+      {
+        $lookup: {
+          from: 'submissions',
+          localField: 'submissionId',
+          foreignField: '_id',
+          as: 'submission'
+        }
+      },
+      { $unwind: { path: '$submission', preserveNullAndEmptyArrays: false } },
+      { $match: { 'submission.status': 'published' } },
       { $group: { _id: null, contentViews: { $sum: { $ifNull: ['$viewCount', 0] } } } }
     ]);
 
@@ -191,23 +187,34 @@ router.get('/overview', async (req, res) => {
   }
 });
 
-// GET /analytics/top-content-pieces
-// Top individual content pieces by DailyView (targetType: 'content'), joined to Content + author
-// Supports period=day|week|month|all (default: week), limit
-router.get('/top-content-pieces', async (req, res) => {
+router.get('/top-featured-content', async (req, res) => {
   try {
     const { period = 'week', limit = 10 } = req.query;
     const limitNum = Number.parseInt(limit, 10) || 10;
     const startDate = getStartDateForPeriod(period);
 
-    // all-time: rank by lifetime viewCount on Content doc
     if (!startDate) {
       const pipeline = [
-        { $match: { status: 'published' } },
+        { $match: { isFeatured: true } },
         { $addFields: { viewCount: { $ifNull: ['$viewCount', 0] } } },
-        { $lookup: { from: 'submissions', localField: 'submissionId', foreignField: '_id', as: 'submission' } },
-        { $unwind: { path: '$submission', preserveNullAndEmptyArrays: true } },
-        { $lookup: { from: 'users', localField: 'submission.userId', foreignField: '_id', as: 'author' } },
+        {
+          $lookup: {
+            from: 'submissions',
+            localField: 'submissionId',
+            foreignField: '_id',
+            as: 'submission'
+          }
+        },
+        { $unwind: { path: '$submission', preserveNullAndEmptyArrays: false } },
+        { $match: { 'submission.status': 'published' } },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'submission.userId',
+            foreignField: '_id',
+            as: 'author'
+          }
+        },
         { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
         {
           $project: {
@@ -228,16 +235,41 @@ router.get('/top-content-pieces', async (req, res) => {
       return res.json({ period: 'all', top });
     }
 
-    // period-limited: aggregate DailyView content buckets
+    // period-limited: aggregate DailyView where targetType='content' only
     const pipeline = [
       { $match: { targetType: 'content', updatedAt: { $gte: startDate } } },
       { $group: { _id: '$targetId', periodViews: { $sum: '$count' } } },
-      { $lookup: { from: 'contents', localField: '_id', foreignField: '_id', as: 'content' } },
+      // Join to Content (both are String UUIDs)
+      {
+        $lookup: {
+          from: 'contents',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'content'
+        }
+      },
       { $unwind: '$content' },
-      { $match: { 'content.status': 'published' } },
-      { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
-      { $unwind: { path: '$submission', preserveNullAndEmptyArrays: true } },
-      { $lookup: { from: 'users', localField: 'submission.userId', foreignField: '_id', as: 'author' } },
+      { $match: { 'content.isFeatured': true } },
+      // Join to Submission to filter published + get submissionType
+      {
+        $lookup: {
+          from: 'submissions',
+          localField: 'content.submissionId',
+          foreignField: '_id',
+          as: 'submission'
+        }
+      },
+      { $unwind: { path: '$submission', preserveNullAndEmptyArrays: false } },
+      { $match: { 'submission.status': 'published' } },
+      // userId and User._id are both String UUIDs — plain lookup works
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'submission.userId',
+          foreignField: '_id',
+          as: 'author'
+        }
+      },
       { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
       {
         $project: {
@@ -262,8 +294,6 @@ router.get('/top-content-pieces', async (req, res) => {
   }
 });
 
-// POST /analytics/cleanup-dailyviews
-// Deletes DailyView entries older than `days` (default 7). Protected endpoint.
 router.post('/cleanup-dailyviews', async (req, res) => {
   try {
     const { days = 7 } = req.body || {};
