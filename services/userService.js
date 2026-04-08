@@ -74,11 +74,6 @@ class UserService {
     if (!user) {
       throw new Error('User not found');
     }
-    console.log('Current user data:', {
-      name: user.name,
-      bio: user.bio,
-      profileImage: user.profileImage
-    });
     const allowedFields = new Set(['name', 'bio', 'profileImage', 'socialLinks']);
     const updates = {};
     Object.keys(updateData).forEach(key => {
@@ -88,11 +83,6 @@ class UserService {
     });
     Object.assign(user, updates);
     await user.save(); 
-    console.log('💾 User saved successfully:', {
-      name: user.name,
-      bio: user.bio,
-      profileImage: user.profileImage
-    });
     return user.toPublicJSON();
   }
 

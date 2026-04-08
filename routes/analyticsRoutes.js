@@ -191,6 +191,77 @@ router.get('/overview', async (req, res) => {
   }
 });
 
+// GET /analytics/top-content-pieces
+// Top individual content pieces by DailyView (targetType: 'content'), joined to Content + author
+// Supports period=day|week|month|all (default: week), limit
+router.get('/top-content-pieces', async (req, res) => {
+  try {
+    const { period = 'week', limit = 10 } = req.query;
+    const limitNum = Number.parseInt(limit, 10) || 10;
+    const startDate = getStartDateForPeriod(period);
+
+    // all-time: rank by lifetime viewCount on Content doc
+    if (!startDate) {
+      const pipeline = [
+        { $match: { status: 'published' } },
+        { $addFields: { viewCount: { $ifNull: ['$viewCount', 0] } } },
+        { $lookup: { from: 'submissions', localField: 'submissionId', foreignField: '_id', as: 'submission' } },
+        { $unwind: { path: '$submission', preserveNullAndEmptyArrays: true } },
+        { $lookup: { from: 'users', localField: 'submission.userId', foreignField: '_id', as: 'author' } },
+        { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 1,
+            title: 1,
+            viewCount: 1,
+            periodViews: '$viewCount',
+            type: '$submission.submissionType',
+            author: { $ifNull: ['$author.name', '$author.email'] },
+            slug: '$submission.seo.slug'
+          }
+        },
+        { $sort: { viewCount: -1 } },
+        { $limit: limitNum }
+      ];
+
+      const top = await Content.aggregate(pipeline);
+      return res.json({ period: 'all', top });
+    }
+
+    // period-limited: aggregate DailyView content buckets
+    const pipeline = [
+      { $match: { targetType: 'content', updatedAt: { $gte: startDate } } },
+      { $group: { _id: '$targetId', periodViews: { $sum: '$count' } } },
+      { $lookup: { from: 'contents', localField: '_id', foreignField: '_id', as: 'content' } },
+      { $unwind: '$content' },
+      { $match: { 'content.status': 'published' } },
+      { $lookup: { from: 'submissions', localField: 'content.submissionId', foreignField: '_id', as: 'submission' } },
+      { $unwind: { path: '$submission', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'users', localField: 'submission.userId', foreignField: '_id', as: 'author' } },
+      { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: '$content._id',
+          title: '$content.title',
+          viewCount: { $ifNull: ['$content.viewCount', 0] },
+          periodViews: 1,
+          type: '$submission.submissionType',
+          author: { $ifNull: ['$author.name', '$author.email'] },
+          slug: '$submission.seo.slug'
+        }
+      },
+      { $sort: { periodViews: -1, viewCount: -1 } },
+      { $limit: limitNum }
+    ];
+
+    const top = await DailyView.aggregate(pipeline);
+    res.json({ period, top });
+  } catch (error) {
+    console.error('❌ Top Content Pieces Error:', error);
+    res.status(500).json({ error: 'Failed to fetch top content pieces', details: process.env.NODE_ENV === 'development' ? error.message : undefined });
+  }
+});
+
 // POST /analytics/cleanup-dailyviews
 // Deletes DailyView entries older than `days` (default 7). Protected endpoint.
 router.post('/cleanup-dailyviews', async (req, res) => {
