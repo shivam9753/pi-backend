@@ -230,6 +230,7 @@ app.use('/api/content', contentRoutes);
 app.use('/api/tags', tagRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/response-templates', responseTemplateRoutes);
+app.use('/api/audit', require('./routes/auditRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 
 // Sitemap route (public)
